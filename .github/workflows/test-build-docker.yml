@@ -1,0 +1,55 @@
+name: Test and Build Docker
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  docker-build-and-test:
+    name: Build and Test Docker Image
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Build Docker image
+        run: docker build -t be-repo ./
+      
+      - name: Run Docker container
+        run: docker run -d --name test-container -p 3000:3000 be-repo
+      
+      - name: Wait for application to be ready
+        run: |
+          echo "Waiting for application to be ready..."
+          for i in {1..30}; do
+            if curl -s http://localhost:3000/ > /dev/null 2>&1; then
+              echo "✓ Application is ready after ${i} seconds"
+              break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "✗ Application failed to start within 30 seconds"
+              exit 1
+            fi
+            sleep 1
+          done
+      
+      - name: Test application endpoint
+        run: |
+          RESPONSE=$(curl -s http://localhost:3000/)
+          echo "Response: $RESPONSE"
+          if [ "$RESPONSE" = "Hello World!" ]; then
+            echo "✓ Test passed: Response matches 'Hello World!'"
+            exit 0
+          else
+            echo "✗ Test failed: Expected 'Hello World!' but got '$RESPONSE'"
+            exit 1
+          fi
+      
+      - name: Stop and remove container
+        if: always()
+        run: |
+          docker stop test-container || true
+          docker rm test-container || true
