@@ -1,3 +1,5 @@
+[![Build and Test](https://github.com/WDP301-SP26/BE-repo/actions/workflows/build-and-test.yml/badge.svg)](https://github.com/WDP301-SP26/BE-repo/actions/workflows/build-and-test.yml)
+[![Test and Build Docker](https://github.com/WDP301-SP26/BE-repo/actions/workflows/test-build-docker.yml/badge.svg)](https://github.com/WDP301-SP26/BE-repo/actions/workflows/test-build-docker.yml)
 # BE-repo
 
 Backend repository built with NestJS framework.
