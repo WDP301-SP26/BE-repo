@@ -70,7 +70,7 @@ export class AuthService {
     const user = await this.validateUser(loginDto.email, loginDto.password);
 
     if (!user) {
-      throw new BadRequestException('Email hoặc mật khẩu không đúng');
+      throw new UnauthorizedException('Email hoặc mật khẩu không đúng');
     }
 
     // Update last login
@@ -277,7 +277,7 @@ export class AuthService {
 
   // ============ JWT Token Generation ============
 
-  generateJwtToken(user: any) {
+  private generateJwtToken(user: any) {
     const payload = {
       sub: user.id,
       email: user.email,
