@@ -15,6 +15,13 @@ FROM node:20-alpine AS build
 WORKDIR /usr/src/app
 COPY --from=install /usr/src/app/node_modules ./node_modules
 
+# Copy package files and prisma schema
+COPY package*.json ./
+COPY prisma ./prisma/
+
+# Generate Prisma client
+RUN npx prisma generate
+
 # Copy the rest of the application files
 COPY . .
 
