@@ -33,8 +33,8 @@ import type { Request, Response } from 'express';
 @Controller('auth')
 export class AuthController {
   constructor(
-    private authService: AuthService,
-    private configService: ConfigService,
+    private readonly authService: AuthService,
+    private readonly configService: ConfigService,
   ) {}
 
   // ============ Email/Password Authentication ============
@@ -79,9 +79,10 @@ export class AuthController {
   @UseGuards(OptionalJwtAuthGuard, GitHubOAuthGuard)
   @ApiOperation({ summary: 'GitHub OAuth callback (internal use)' })
   @ApiResponse({ status: 302, description: 'Redirects to frontend with token' })
-  async githubCallback(@Req() req: Request, @Res() res: Response) {
+  // TODO: Fix this endpoint so it calls AuthService and returns user data + token
+  githubCallback(@Req() req: Request, @Res() res: Response) {
     const user = req.user;
-    const token = this.authService['generateJwtToken'](user);
+    const token = this.authService.generateJwtToken(user);
 
     const frontendUrl = this.configService.get<string>('FRONTEND_URL');
     res.redirect(`${frontendUrl}/auth/callback?token=${token}`);
@@ -105,7 +106,8 @@ export class AuthController {
   @UseGuards(OptionalJwtAuthGuard, JiraOAuthGuard)
   @ApiOperation({ summary: 'Jira OAuth callback (internal use)' })
   @ApiResponse({ status: 302, description: 'Redirects to frontend with token' })
-  async jiraCallback(@Req() req: Request, @Res() res: Response) {
+  // TODO: Fix this endpoint so it calls AuthService and returns user data + token
+  jiraCallback(@Req() req: Request, @Res() res: Response) {
     const user = req.user;
     const token = this.authService['generateJwtToken'](user);
 
@@ -121,7 +123,8 @@ export class AuthController {
   @ApiOperation({ summary: 'Get current authenticated user profile' })
   @ApiResponse({ status: 200, description: 'Returns user profile' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  async getCurrentUser(@Req() req: any) {
+  // TODO: Fix this endpoint to return proper user data using JWT
+  getCurrentUser(@Req() req: any) {
     return req.user;
   }
 
@@ -132,7 +135,7 @@ export class AuthController {
   @ApiResponse({ status: 200, description: 'Returns list of linked accounts' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async getLinkedAccounts(@Req() req: any) {
-    return this.authService.getLinkedAccounts(req.user.id);
+    return await this.authService.getLinkedAccounts(req.user.id);
   }
 
   @Delete('unlink/:provider')
@@ -145,7 +148,7 @@ export class AuthController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async unlinkAccount(@Req() req: any, @Param('provider') provider: string) {
     const providerEnum = provider.toUpperCase();
-    return this.authService.unlinkOAuthAccount(
+    return await this.authService.unlinkOAuthAccount(
       req.user.id,
       providerEnum as any,
     );
