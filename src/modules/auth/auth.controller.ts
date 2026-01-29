@@ -56,7 +56,7 @@ export class AuthController {
     status: 200,
     description: 'Login successful, returns JWT token',
   })
-  @ApiResponse({ status: 401, description: 'Invalid credentials' })
+  @ApiResponse({ status: 400, description: 'Invalid credentials' })
   async login(@Body() loginDto: LoginDto) {
     return this.authService.login(loginDto);
   }
@@ -124,7 +124,7 @@ export class AuthController {
   @ApiResponse({ status: 200, description: 'Returns user profile' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   // TODO: Fix this endpoint to return proper user data using JWT
-  getCurrentUser(@Req() req: any) {
+  getCurrentUser(@Req() req: Request) {
     return req.user;
   }
 

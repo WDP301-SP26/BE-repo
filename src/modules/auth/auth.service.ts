@@ -70,7 +70,7 @@ export class AuthService {
     const user = await this.validateUser(loginDto.email, loginDto.password);
 
     if (!user) {
-      throw new UnauthorizedException('Email hoặc mật khẩu không đúng');
+      throw new BadRequestException('Email hoặc mật khẩu không đúng');
     }
 
     // Update last login

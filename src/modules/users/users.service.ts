@@ -34,7 +34,6 @@ export class UsersService {
     });
 
     // Bước 4: Trả về kết quả (Loại bỏ password_hash để bảo mật)
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { password_hash, ...result } = newUser;
     return result;
   }
@@ -51,7 +50,6 @@ export class UsersService {
     // Nếu có update password thì phải hash lại
     if (updateUserDto.password) {
       const hashedPassword = await bcrypt.hash(updateUserDto.password, 10);
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { password, ...rest } = updateUserDto;
       return this.prisma.user.update({
         where: { id },
