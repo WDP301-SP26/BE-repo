@@ -18,6 +18,9 @@ COPY --from=install /usr/src/app/node_modules ./node_modules
 # Copy the rest of the application files
 COPY . .
 
+# Generate Prisma Client (if prisma schema exists)
+RUN if [ -f prisma/schema.prisma ]; then npx prisma generate; fi
+
 # Build the NestJS application
 RUN npm run build
 
