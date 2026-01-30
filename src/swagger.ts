@@ -7,7 +7,10 @@ export const getDocumentBuilder = () => {
       .setDescription('Comprehensive API documentation for the WDP301 project')
       .setVersion('1.0.0')
       .addBearerAuth()
-      .addServer('http://localhost:3000', 'Local development')
+      .addServer(
+        `http://localhost:${process.env.PORT ?? 3000}`,
+        'Local development',
+      )
       // TODO add prod url when deployed
       .build()
   );
