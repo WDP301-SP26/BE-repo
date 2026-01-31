@@ -36,10 +36,6 @@ RUN npm ci --only=production
 COPY --from=build /usr/src/app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=build /usr/src/app/node_modules/@prisma ./node_modules/@prisma
 
-# Copy Prisma CLI from build stage (needed for migrations)
-COPY --from=build /usr/src/app/node_modules/.bin/prisma ./node_modules/.bin/prisma
-COPY --from=build /usr/src/app/node_modules/prisma ./node_modules/prisma
-
 # Copy Prisma schema
 COPY --from=build /usr/src/app/prisma ./prisma
 

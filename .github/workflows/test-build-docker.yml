@@ -56,12 +56,19 @@ jobs:
           rm -rf /tmp/.buildx-cache
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache
       
-      - name: Run database migrations
-        run: |
-          docker run --rm --add-host=host.docker.internal:host-gateway -e DATABASE_URL="postgresql://test:test@host.docker.internal:5432/testdb?schema=public" be-repo:latest node_modules/.bin/prisma migrate deploy
-      
       - name: Run Docker container
-        run: docker run -d --name test-container -p 3000:3000 --add-host=host.docker.internal:host-gateway -e DATABASE_URL="postgresql://test:test@host.docker.internal:5432/testdb?schema=public" be-repo:latest
+        run: |
+          docker run -d --name test-container -p 3000:3000 \
+            --add-host=host.docker.internal:host-gateway \
+            -e DATABASE_URL="postgresql://test:test@host.docker.internal:5432/testdb?schema=public&connection_limit=1&connect_timeout=10" \
+            -e JWT_SECRET="test-secret-key-for-ci" \
+            -e GITHUB_CLIENT_ID="test-github-id" \
+            -e GITHUB_CLIENT_SECRET="test-github-secret" \
+            -e GITHUB_CALLBACK_URL="http://localhost:3000/auth/github/callback" \
+            -e JIRA_CLIENT_ID="test-jira-id" \
+            -e JIRA_CLIENT_SECRET="test-jira-secret" \
+            -e JIRA_CALLBACK_URL="http://localhost:3000/auth/jira/callback" \
+            be-repo:latest
       
       - name: Wait for application to be ready
         run: |
