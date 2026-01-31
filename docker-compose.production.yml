@@ -1,0 +1,60 @@
+# Docker Compose Setup for WDP391 Backend
+
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: wdp391-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - '${POSTGRES_PORT}:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - wdp391-network
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # NestJS Backend API
+  api:
+    image: ${DO_REGISTRY}/be-repo:latest
+    container_name: wdp391-api
+    restart: unless-stopped
+    environment:
+      NODE_ENV: ${NODE_ENV}
+      PORT: ${PORT}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
+      GITHUB_CALLBACK_URL: ${GITHUB_CALLBACK_URL}
+      JIRA_CLIENT_ID: ${JIRA_CLIENT_ID}
+      JIRA_CLIENT_SECRET: ${JIRA_CLIENT_SECRET}
+      JIRA_CALLBACK_URL: ${JIRA_CALLBACK_URL}
+      FRONTEND_URL: ${FRONTEND_URL}
+    ports:
+      - '${PORT}:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - wdp391-network
+    command: node dist/main
+
+networks:
+  wdp391-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
