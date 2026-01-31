@@ -58,7 +58,7 @@ jobs:
       
       - name: Run database migrations
         run: |
-          docker run --rm --add-host=host.docker.internal:host-gateway -e DATABASE_URL="postgresql://test:test@host.docker.internal:5432/testdb?schema=public" be-repo:latest npx prisma migrate deploy
+          docker run --rm --add-host=host.docker.internal:host-gateway -e DATABASE_URL="postgresql://test:test@host.docker.internal:5432/testdb?schema=public" be-repo:latest node_modules/.bin/prisma migrate deploy
       
       - name: Run Docker container
         run: docker run -d --name test-container -p 3000:3000 --add-host=host.docker.internal:host-gateway -e DATABASE_URL="postgresql://test:test@host.docker.internal:5432/testdb?schema=public" be-repo:latest
