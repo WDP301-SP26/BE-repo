@@ -43,13 +43,13 @@ services:
       JIRA_CALLBACK_URL: ${JIRA_CALLBACK_URL}
       FRONTEND_URL: ${FRONTEND_URL}
     ports:
-      - "${PORT}:3000"
+      - "${PORT}:${PORT}"
     depends_on:
       postgres:
         condition: service_healthy
     networks:
       - wdp391-network
-    command: node dist/main
+    command: sh -c "npx prisma migrate deploy && node dist/main"
 
 networks:
   wdp391-network:
