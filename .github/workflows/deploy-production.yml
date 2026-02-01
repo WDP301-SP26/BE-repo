@@ -18,14 +18,14 @@ jobs:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
     if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      
+
       - name: Cache Docker layers
         uses: actions/cache@v4
         with:
@@ -33,15 +33,15 @@ jobs:
           key: ${{ runner.os }}-buildx-${{ hashFiles('dockerfile', 'package*.json') }}
           restore-keys: |
             ${{ runner.os }}-buildx-
-      
+
       - name: Install doctl
         uses: digitalocean/action-doctl@v2
         with:
           token: ${{ secrets.DO_ACCESS_TOKEN }}
-      
+
       - name: Log in to DigitalOcean Container Registry
         run: doctl registry login --expiry-seconds 600
-      
+
       - name: Build Docker image
         uses: docker/build-push-action@v5
         with:
@@ -52,7 +52,7 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           cache-from: type=local,src=/tmp/.buildx-cache
           cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
-      
+
       - name: Move cache
         run: |
           rm -rf /tmp/.buildx-cache
@@ -62,11 +62,11 @@ jobs:
     name: Deploy to DigitalOcean Droplet
     needs: build-and-push
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Copy docker-compose.production.yml to Droplet
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -75,7 +75,7 @@ jobs:
           key: ${{ secrets.DO_SSH_PRIVATE_KEY }}
           source: "docker-compose.production.yml"
           target: "/app/be-repo"
-      
+
       - name: Deploy to Droplet via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -84,20 +84,22 @@ jobs:
           key: ${{ secrets.DO_SSH_PRIVATE_KEY }}
           script: |
             cd /app/be-repo
-            
+
             # Log in to DigitalOcean Container Registry
             echo ${{ secrets.DO_ACCESS_TOKEN }} | docker login registry.digitalocean.com -u ${{ secrets.DO_ACCESS_TOKEN }} --password-stdin
-            
-            # Stop and remove old containers
-            docker-compose -f docker-compose.production.yml down
-            
-            # Start new containers with latest image
-            docker-compose -f docker-compose.production.yml pull
-            docker-compose -f docker-compose.production.yml up -d
-            
+
+            # Pull latest image
+            docker compose -f docker-compose.production.yml pull
+
+            # Stop and remove old containers with Doppler
+            doppler run --project wdp301_be --config prd -- docker compose -f docker-compose.production.yml down
+
+            # Start new containers with Doppler secrets injection
+            doppler run --project wdp301_be --config prd -- docker compose -f docker-compose.production.yml up -d
+
             # Clean up old images
             docker image prune -af
-      
+
       - name: Verify Deployment
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -106,4 +108,4 @@ jobs:
           key: ${{ secrets.DO_SSH_PRIVATE_KEY }}
           script: |
             cd /app/be-repo
-            docker-compose -f docker-compose.production.yml ps
+            docker compose -f docker-compose.production.yml ps

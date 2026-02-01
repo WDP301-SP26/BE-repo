@@ -49,8 +49,6 @@ COPY --from=build /usr/src/app/prisma ./prisma
 # Copy the built application
 COPY --from=build /usr/src/app/dist ./dist
 
-# Expose the application port
-EXPOSE 3000
-
-# Command to run the application
+# App listens on PORT from environment variable (controlled by Doppler)
+# No EXPOSE directive as port is dynamic (8080 in production)
 CMD ["node", "dist/main"]
