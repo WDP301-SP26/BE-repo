@@ -1,5 +1,5 @@
 # Install dependencies
-FROM node:lts-bookworm AS install
+FROM node:lts-alpine AS install
 
 # Set the working directory inside the container
 WORKDIR /usr/src/app
@@ -11,7 +11,11 @@ COPY package*.json ./
 RUN npm install
 
 # Build the application
-FROM node:lts-bookworm AS build
+FROM node:lts-alpine AS build
+
+# Install OpenSSL for Prisma
+RUN apk add --no-cache openssl
+
 WORKDIR /usr/src/app
 COPY --from=install /usr/src/app/node_modules ./node_modules
 
@@ -25,12 +29,15 @@ RUN if [ -f prisma/schema.prisma ]; then npx prisma generate; fi
 RUN npm run build
 
 # Prepare the production image
-FROM node:lts-bookworm AS production
+FROM node:lts-alpine AS production
 WORKDIR /usr/src/app
+
+# Install OpenSSL for Prisma
+RUN apk add --no-cache openssl
 
 # Copy package files and install production dependencies only
 COPY package*.json ./
-RUN npm ci --only=production
+RUN npm ci --only=production && npm cache clean --force
 
 # Copy generated Prisma Client from build stage
 COPY --from=build /usr/src/app/node_modules/.prisma ./node_modules/.prisma

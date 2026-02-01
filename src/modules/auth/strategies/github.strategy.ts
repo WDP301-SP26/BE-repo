@@ -1,9 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { PassportStrategy } from '@nestjs/passport';
-import { Strategy, Profile } from 'passport-github2';
 import { ConfigService } from '@nestjs/config';
-import { AuthService } from '../auth.service';
+import { PassportStrategy } from '@nestjs/passport';
 import { IntegrationProvider } from '@prisma/client';
+import { Profile, Strategy } from 'passport-github2';
+import { AuthService } from '../auth.service';
 
 @Injectable()
 export class GitHubStrategy extends PassportStrategy(Strategy, 'github') {
@@ -12,9 +12,9 @@ export class GitHubStrategy extends PassportStrategy(Strategy, 'github') {
     private authService: AuthService,
   ) {
     super({
-      clientID: configService.get<string>('GITHUB_CLIENT_ID'),
-      clientSecret: configService.get<string>('GITHUB_CLIENT_SECRET'),
-      callbackURL: configService.get<string>('GITHUB_CALLBACK_URL'),
+      clientID: configService.get<string>('GH_CLIENT_ID'),
+      clientSecret: configService.get<string>('GH_CLIENT_SECRET'),
+      callbackURL: configService.get<string>('GH_CALLBACK_URL'),
       scope: ['user:email', 'read:user'],
       passReqToCallback: true,
     } as any); // Type assertion to bypass Passport typing issue

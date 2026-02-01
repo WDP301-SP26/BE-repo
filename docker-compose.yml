@@ -1,6 +1,6 @@
 # Docker Compose Setup for WDP391 Backend
 
-version: '3.8'
+version: "3.8"
 
 services:
   # PostgreSQL Database
@@ -13,13 +13,13 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wdp391password}
       POSTGRES_DB: ${POSTGRES_DB:-wdp391_db}
     ports:
-      - '${POSTGRES_PORT:-5432}:5432'
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - wdp391-network
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-wdp391}']
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-wdp391}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -37,15 +37,15 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-wdp391}:${POSTGRES_PASSWORD:-wdp391password}@postgres:5432/${POSTGRES_DB:-wdp391_db}?schema=public
       JWT_SECRET: ${JWT_SECRET:-your-super-secret-key-change-in-production}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
-      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
-      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
-      GITHUB_CALLBACK_URL: ${GITHUB_CALLBACK_URL:-http://localhost:3000/api/auth/github/callback}
+      GH_CLIENT_ID: ${GH_CLIENT_ID}
+      GH_CLIENT_SECRET: ${GH_CLIENT_SECRET}
+      GH_CALLBACK_URL: ${GH_CALLBACK_URL:-http://localhost:3000/api/auth/github/callback}
       JIRA_CLIENT_ID: ${JIRA_CLIENT_ID}
       JIRA_CLIENT_SECRET: ${JIRA_CLIENT_SECRET}
       JIRA_CALLBACK_URL: ${JIRA_CALLBACK_URL:-http://localhost:3000/api/auth/jira/callback}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
     ports:
-      - '${PORT:-3000}:3000'
+      - "${PORT:-3000}:3000"
     depends_on:
       postgres:
         condition: service_healthy
