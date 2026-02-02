@@ -1,15 +1,14 @@
 import {
-  Injectable,
-  ConflictException,
-  UnauthorizedException,
   BadRequestException,
+  ConflictException,
+  Injectable,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { PrismaService } from '../../prisma/prisma.service';
-import { RegisterDto } from './dto/register.dto';
-import { LoginDto } from './dto/login.dto';
+import { AuthProvider, IntegrationProvider } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
-import { IntegrationProvider, AuthProvider } from '@prisma/client';
+import { PrismaService } from '../../prisma/prisma.service';
+import { LoginDto } from './dto/login.dto';
+import { RegisterDto } from './dto/register.dto';
 
 interface OAuthProfile {
   id: string; // Provider's user ID
@@ -46,8 +45,8 @@ export class AuthService {
       data: {
         email: registerDto.email,
         password_hash: hashedPassword,
-        full_name: registerDto.full_name,
-        student_id: registerDto.student_id,
+        full_name: registerDto.fullName,
+        student_id: registerDto.studentId,
         primary_provider: AuthProvider.EMAIL,
       },
       select: {
