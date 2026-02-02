@@ -1,11 +1,11 @@
+import { ApiProperty } from '@nestjs/swagger';
 import {
   IsEmail,
   IsNotEmpty,
+  IsOptional,
   IsString,
   MinLength,
-  IsOptional,
 } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
 
 export class RegisterDto {
   @ApiProperty({
@@ -27,7 +27,7 @@ export class RegisterDto {
   @ApiProperty({ example: 'Nguyễn Văn A', description: 'Họ và tên đầy đủ' })
   @IsString()
   @IsNotEmpty({ message: 'Tên đầy đủ là bắt buộc' })
-  full_name: string;
+  fullName: string;
 
   @ApiProperty({
     example: 'SE123456',
@@ -36,5 +36,5 @@ export class RegisterDto {
   })
   @IsString()
   @IsOptional()
-  student_id?: string; // Optional for OAuth users
+  studentId?: string; // Optional for OAuth users
 }
