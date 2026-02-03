@@ -93,7 +93,7 @@ export class AuthController {
   ) {
     // Validate redirect_uri against allowed origins from environment
     const allowedOrigins = this.configService
-      .get<string>('ALLOWED_ORIGINS')
+      .get<string>('ALLOWED_CORS_ORIGINS')
       ?.split(',') || ['http://localhost:3000', 'http://localhost:5173'];
 
     if (!redirectUri || !allowedOrigins.includes(redirectUri)) {
