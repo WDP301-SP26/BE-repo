@@ -1,14 +1,20 @@
-import { NestFactory } from '@nestjs/core';
-import { AppModule } from './app.module';
-import { SwaggerModule } from '@nestjs/swagger';
 import { ValidationPipe } from '@nestjs/common';
+import { NestFactory } from '@nestjs/core';
+import { SwaggerModule } from '@nestjs/swagger';
+import cookieParser from 'cookie-parser';
+import { AppModule } from './app.module';
 import { getDocumentBuilder, swaggerUiOptions } from './swagger';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // Set global API prefix
-  app.setGlobalPrefix('api');
+  // Enable cookie parser middleware
+  app.use(cookieParser());
+
+  // Set global API prefix (exclude root / and /health)
+  app.setGlobalPrefix('api', {
+    exclude: ['/', 'health', 'health/ping'],
+  });
 
   // Enable CORS
   app.enableCors({

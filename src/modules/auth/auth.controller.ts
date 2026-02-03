@@ -1,33 +1,33 @@
 import {
-  Controller,
-  Post,
   Body,
-  Get,
-  UseGuards,
-  Req,
-  Res,
+  Controller,
   Delete,
-  Param,
+  Get,
   HttpCode,
   HttpStatus,
+  Param,
+  Post,
+  Req,
+  Res,
+  UseGuards,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
-  ApiTags,
-  ApiOperation,
-  ApiResponse,
-  ApiBody,
   ApiBearerAuth,
+  ApiBody,
+  ApiOperation,
   ApiParam,
+  ApiResponse,
+  ApiTags,
 } from '@nestjs/swagger';
+import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
-import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
-import { JwtAuthGuard } from './guards/jwt-auth.guard';
-import { OptionalJwtAuthGuard } from './guards/optional-jwt-auth.guard';
+import { RegisterDto } from './dto/register.dto';
 import { GitHubOAuthGuard } from './guards/github-oauth.guard';
 import { JiraOAuthGuard } from './guards/jira-oauth.guard';
-import { ConfigService } from '@nestjs/config';
-import type { Request, Response } from 'express';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from './guards/optional-jwt-auth.guard';
 
 @ApiTags('Authentication')
 @Controller('auth')
@@ -78,14 +78,26 @@ export class AuthController {
   @Get('github/callback')
   @UseGuards(OptionalJwtAuthGuard, GitHubOAuthGuard)
   @ApiOperation({ summary: 'GitHub OAuth callback (internal use)' })
-  @ApiResponse({ status: 302, description: 'Redirects to frontend with token' })
-  // TODO: Fix this endpoint so it calls AuthService and returns user data + token
+  @ApiResponse({
+    status: 302,
+    description: 'Sets auth cookie and redirects to frontend',
+  })
   githubCallback(@Req() req: Request, @Res() res: Response) {
     const user = req.user;
     const token = this.authService.generateJwtToken(user);
 
-    const frontendUrl = this.configService.get<string>('FRONTEND_URL');
-    res.redirect(`${frontendUrl}/auth/callback?token=${token}`);
+    // Set secure httpOnly cookie
+    res.cookie('auth_token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
+
+    // Redirect to frontend without token in URL
+    const frontendUrl =
+      this.configService.get<string>('FRONTEND_URL') || 'http://localhost:3000';
+    res.redirect(`${frontendUrl}/auth/callback`);
   }
 
   // ============ Jira OAuth ============
@@ -105,14 +117,26 @@ export class AuthController {
   @Get('jira/callback')
   @UseGuards(OptionalJwtAuthGuard, JiraOAuthGuard)
   @ApiOperation({ summary: 'Jira OAuth callback (internal use)' })
-  @ApiResponse({ status: 302, description: 'Redirects to frontend with token' })
-  // TODO: Fix this endpoint so it calls AuthService and returns user data + token
+  @ApiResponse({
+    status: 302,
+    description: 'Sets auth cookie and redirects to frontend',
+  })
   jiraCallback(@Req() req: Request, @Res() res: Response) {
     const user = req.user;
-    const token = this.authService['generateJwtToken'](user);
+    const token = this.authService.generateJwtToken(user);
 
-    const frontendUrl = this.configService.get<string>('FRONTEND_URL');
-    res.redirect(`${frontendUrl}/auth/callback?token=${token}`);
+    // Set secure httpOnly cookie
+    res.cookie('auth_token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
+
+    // Redirect to frontend without token in URL
+    const frontendUrl =
+      this.configService.get<string>('FRONTEND_URL') || 'http://localhost:3000';
+    res.redirect(`${frontendUrl}/auth/callback`);
   }
 
   // ============ Account Management ============
