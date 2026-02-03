@@ -2,6 +2,23 @@ import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import { RedisService } from './redis.service';
 
+// Mock ioredis to avoid real Redis connection
+jest.mock('ioredis', () => {
+  const mockRedis = {
+    setex: jest.fn().mockResolvedValue('OK'),
+    get: jest.fn().mockImplementation((key: string) => {
+      if (key === 'oauth:state:test-state-123') {
+        return Promise.resolve('http://localhost:3000');
+      }
+      return Promise.resolve(null);
+    }),
+    del: jest.fn().mockResolvedValue(1),
+    quit: jest.fn().mockResolvedValue('OK'),
+    on: jest.fn(),
+  };
+  return jest.fn(() => mockRedis);
+});
+
 describe('RedisService', () => {
   let service: RedisService;
 
