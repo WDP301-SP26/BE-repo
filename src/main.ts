@@ -16,11 +16,27 @@ async function bootstrap() {
     exclude: ['/', 'health', 'health/ping'],
   });
 
-  // Enable CORS
+  // Enable CORS with specific origins and credentials support
+  const allowedOrigins = [
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'https://jihub.vercel.app',
+  ];
+
   app.enableCors({
-    origin: process.env.ALLOWED_CORS_ORIGINS?.split(',') || '*',
+    origin: (origin, callback) => {
+      // Allow requests with no origin (mobile apps, Postman, etc.)
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-    credentials: true,
+    credentials: true, // Allow cookies
+    allowedHeaders: 'Content-Type,Authorization,Accept',
   });
 
   // Global validation pipe

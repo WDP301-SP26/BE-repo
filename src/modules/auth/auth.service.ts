@@ -274,6 +274,76 @@ export class AuthService {
     return { message: 'Đã hủy liên kết thành công' };
   }
 
+  // ============ GitHub OAuth Manual Flow ============
+
+  async handleGitHubCallback(code: string) {
+    const clientId = process.env.GH_CLIENT_ID;
+    const clientSecret = process.env.GH_CLIENT_SECRET;
+
+    // Step 1: Exchange code for access token
+    const tokenResponse = await fetch(
+      'https://github.com/login/oauth/access_token',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          client_id: clientId,
+          client_secret: clientSecret,
+          code,
+        }),
+      },
+    );
+
+    const tokenData = await tokenResponse.json();
+
+    if (!tokenData.access_token) {
+      throw new BadRequestException('Failed to exchange code for token');
+    }
+
+    // Step 2: Fetch user profile from GitHub
+    const profileResponse = await fetch('https://api.github.com/user', {
+      headers: {
+        Authorization: `Bearer ${tokenData.access_token}`,
+        Accept: 'application/vnd.github+json',
+      },
+    });
+
+    const profile = await profileResponse.json();
+
+    // Step 3: Fetch user emails
+    const emailResponse = await fetch('https://api.github.com/user/emails', {
+      headers: {
+        Authorization: `Bearer ${tokenData.access_token}`,
+        Accept: 'application/vnd.github+json',
+      },
+    });
+
+    const emails = await emailResponse.json();
+    const primaryEmail = emails.find((e: any) => e.primary)?.email;
+
+    // Step 4: Create OAuth profile
+    const oauthProfile = {
+      id: String(profile.id),
+      username: profile.login,
+      email: primaryEmail,
+      displayName: profile.name,
+      photos: profile.avatar_url ? [{ value: profile.avatar_url }] : [],
+    };
+
+    // Step 5: Find or create user
+    const user = await this.findOrCreateOAuthUser(
+      IntegrationProvider.GITHUB,
+      oauthProfile,
+      tokenData.access_token,
+      tokenData.refresh_token,
+    );
+
+    return user;
+  }
+
   // ============ JWT Token Generation ============
 
   generateJwtToken(user: any) {
