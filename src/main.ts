@@ -1,4 +1,5 @@
-import { ValidationPipe } from '@nestjs/common';
+import { Logger, ValidationPipe } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { SwaggerModule } from '@nestjs/swagger';
 import cookieParser from 'cookie-parser';
@@ -6,58 +7,74 @@ import { AppModule } from './app.module';
 import { getDocumentBuilder, swaggerUiOptions } from './swagger';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const logger = new Logger('Bootstrap');
 
-  // Enable cookie parser middleware
-  app.use(cookieParser());
+  try {
+    const app = await NestFactory.create(AppModule);
+    const configService = app.get(ConfigService);
 
-  // Set global API prefix (exclude root / and /health)
-  app.setGlobalPrefix('api', {
-    exclude: ['/', 'health', 'health/ping'],
-  });
+    // Enable cookie parser middleware
+    app.use(cookieParser());
 
-  // Enable CORS with dynamic origins from environment variable
-  const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [
-    'http://localhost:3000',
-    'http://localhost:5173',
-  ];
+    // Set global API prefix (exclude root / and /health)
+    app.setGlobalPrefix('api', {
+      exclude: ['/', 'health', 'health/ping'],
+    });
 
-  app.enableCors({
-    origin: (origin, callback) => {
-      // Allow requests with no origin (mobile apps, Postman, etc.)
-      if (!origin) return callback(null, true);
+    // Enable CORS with dynamic origins from environment variable
+    const allowedOrigins = configService
+      .get<string>('ALLOWED_ORIGINS')
+      ?.split(',') || ['http://localhost:3000', 'http://localhost:5173'];
 
-      if (allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error('Not allowed by CORS'));
-      }
-    },
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-    credentials: true, // Allow cookies
-    allowedHeaders: 'Content-Type,Authorization,Accept',
-  });
+    app.enableCors({
+      origin: (
+        origin: string | undefined,
+        callback: (err: Error | null, allow?: boolean) => void,
+      ) => {
+        // Allow requests with no origin (mobile apps, Postman, etc.)
+        if (!origin) return callback(null, true);
 
-  // Global validation pipe
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-    }),
-  );
+        if (allowedOrigins.includes(origin)) {
+          callback(null, true);
+        } else {
+          logger.warn(`CORS blocked origin: ${origin}`);
+          callback(null, false);
+        }
+      },
+      methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+      credentials: true, // Allow cookies
+      allowedHeaders: 'Content-Type,Authorization,Accept',
+    });
 
-  // Swagger setup
-  const swaggerConfig = getDocumentBuilder();
-  const documentFactory = SwaggerModule.createDocument(app, swaggerConfig);
+    // Global validation pipe
+    app.useGlobalPipes(
+      new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      }),
+    );
 
-  SwaggerModule.setup('api/docs', app, documentFactory, swaggerUiOptions);
+    // Swagger setup
+    const swaggerConfig = getDocumentBuilder();
+    const documentFactory = SwaggerModule.createDocument(app, swaggerConfig);
 
-  const port = process.env.PORT ?? 3000;
-  await app.listen(port);
+    SwaggerModule.setup('api/docs', app, documentFactory, swaggerUiOptions);
 
-  console.log(`Application is running on: http://localhost:${port}`);
-  console.log(`Swagger UI is available at: http://localhost:${port}/api/docs`);
-  console.log(`Database URL: http://localhost:5556`);
+    const port = configService.get<number>('PORT', 3000);
+    const prismaStudioPort = configService.get<number>(
+      'PRISMA_STUDIO_PORT',
+      5555,
+    );
+
+    await app.listen(port);
+
+    logger.log(`Application is running on: http://localhost:${port}`);
+    logger.log(`Swagger UI is available at: http://localhost:${port}/api/docs`);
+    logger.log(`Prisma Studio: http://localhost:${prismaStudioPort}`);
+  } catch (error) {
+    logger.error('Failed to start application', error);
+    process.exit(1);
+  }
 }
 void bootstrap();
