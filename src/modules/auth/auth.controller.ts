@@ -78,12 +78,10 @@ export class AuthController {
     @Query('redirect_uri') redirectUri: string,
     @Res() res: Response,
   ) {
-    // Validate redirect_uri
-    const allowedOrigins = [
-      'http://localhost:3000',
-      'http://localhost:5173',
-      'https://jihub.vercel.app',
-    ];
+    // Validate redirect_uri against allowed origins from environment
+    const allowedOrigins = this.configService
+      .get<string>('ALLOWED_ORIGINS')
+      ?.split(',') || ['http://localhost:3000', 'http://localhost:5173'];
 
     if (!redirectUri || !allowedOrigins.includes(redirectUri)) {
       throw new BadRequestException('Invalid or missing redirect_uri');
@@ -94,11 +92,11 @@ export class AuthController {
     await this.redisService.setOAuthState(state, redirectUri);
 
     // Build GitHub OAuth URL with state parameter
-    const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${this.configService.get(
-      'GH_CLIENT_ID',
-    )}&redirect_uri=${encodeURIComponent(
-      this.configService.get<string>('GH_CALLBACK_URL') || '',
-    )}&scope=user:email read:user&state=${state}`;
+    const clientId = this.configService.get('GH_CLIENT_ID');
+    const callbackUrl = this.configService.get<string>('GH_CALLBACK_URL') || '';
+    const scope = 'user:email read:user';
+
+    const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(callbackUrl)}&scope=${scope}&state=${state}`;
 
     res.redirect(githubAuthUrl);
   }
