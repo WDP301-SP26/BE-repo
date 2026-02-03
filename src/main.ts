@@ -16,11 +16,10 @@ async function bootstrap() {
     exclude: ['/', 'health', 'health/ping'],
   });
 
-  // Enable CORS with specific origins and credentials support
-  const allowedOrigins = [
+  // Enable CORS with dynamic origins from environment variable
+  const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [
     'http://localhost:3000',
     'http://localhost:5173',
-    'https://jihub.vercel.app',
   ];
 
   app.enableCors({
