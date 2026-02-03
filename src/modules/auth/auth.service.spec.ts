@@ -314,5 +314,18 @@ describe('AuthService', () => {
         },
       });
     });
+
+    it('should throw error if trying to unlink non-linked account', async () => {
+      const userId = 'user-123';
+      const provider: IntegrationProvider = 'GITHUB';
+      const spyFindUnique = jest.spyOn(
+        mockPrismaService.integrationToken,
+        'findUnique',
+      );
+      (spyFindUnique as jest.Mock).mockResolvedValue(null);
+      await expect(
+        service.unlinkOAuthAccount(userId, provider),
+      ).rejects.toThrow('Tài khoản này chưa được liên kết');
+    });
   });
 });
