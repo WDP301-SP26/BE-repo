@@ -24,6 +24,24 @@ services:
       timeout: 5s
       retries: 5
 
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: wdp391-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - wdp391-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: redis-server --appendonly yes
+
   # NestJS Backend API
   api:
     build:
@@ -44,10 +62,15 @@ services:
       JIRA_CLIENT_SECRET: ${JIRA_CLIENT_SECRET}
       JIRA_CALLBACK_URL: ${JIRA_CALLBACK_URL:-http://localhost:3000/api/auth/jira/callback}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     ports:
       - "${PORT:-3000}:3000"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     networks:
       - wdp391-network
@@ -63,4 +86,6 @@ networks:
 
 volumes:
   postgres_data:
+    driver: local
+  redis_data:
     driver: local
