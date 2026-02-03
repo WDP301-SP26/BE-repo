@@ -24,12 +24,25 @@ import {
 } from '@nestjs/swagger';
 import { randomUUID } from 'crypto';
 import type { Request, Response } from 'express';
-import { RedisService } from 'src/redis/redis.service';
-import { AuthService } from './auth.service';
+import { RedisService } from '../../redis/redis.service';
+import {
+  AuthService,
+  AuthResponse,
+  LoginResponse,
+  LinkedAccountResponse,
+} from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
-import { OptionalJwtAuthGuard } from './guards/optional-jwt-auth.guard';
+import {
+  OptionalJwtAuthGuard,
+  RequestUser,
+} from './guards/optional-jwt-auth.guard';
+import { IntegrationProvider } from '@prisma/client';
+
+export interface AuthorizedRequest extends Request {
+  user: RequestUser;
+}
 
 @ApiTags('Authentication')
 @Controller('auth')
@@ -47,7 +60,7 @@ export class AuthController {
   @ApiBody({ type: RegisterDto })
   @ApiResponse({ status: 201, description: 'User registered successfully' })
   @ApiResponse({ status: 409, description: 'Email already exists' })
-  async register(@Body() registerDto: RegisterDto) {
+  async register(@Body() registerDto: RegisterDto): Promise<AuthResponse> {
     return this.authService.register(registerDto);
   }
 
@@ -60,7 +73,7 @@ export class AuthController {
     description: 'Login successful, returns JWT token',
   })
   @ApiResponse({ status: 400, description: 'Invalid credentials' })
-  async login(@Body() loginDto: LoginDto) {
+  async login(@Body() loginDto: LoginDto): Promise<LoginResponse> {
     return this.authService.login(loginDto);
   }
 
@@ -92,8 +105,8 @@ export class AuthController {
     await this.redisService.setOAuthState(state, redirectUri);
 
     // Build GitHub OAuth URL with state parameter
-    const clientId = this.configService.get('GH_CLIENT_ID');
-    const callbackUrl = this.configService.get<string>('GH_CALLBACK_URL') || '';
+    const clientId = this.configService.get<string>('GH_CLIENT_ID');
+    const callbackUrl = this.configService.get<string>('GH_CALLBACK_URL', '');
     const scope = 'user:email read:user';
 
     const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(callbackUrl)}&scope=${scope}&state=${state}`;
@@ -112,6 +125,11 @@ export class AuthController {
     @Query('state') state: string,
     @Res() res: Response,
   ) {
+    // Validate required parameters
+    if (!code || code.length === 0 || !state || state.length === 0) {
+      throw new BadRequestException('Missing parameter');
+    }
+
     // Retrieve redirect_uri from Redis using state
     const redirectUri = await this.redisService.getOAuthState(state);
 
@@ -127,10 +145,12 @@ export class AuthController {
     const token = this.authService.generateJwtToken(user);
 
     // Set secure httpOnly cookie
+    const isProduction =
+      this.configService.get<string>('NODE_ENV') === 'production';
     res.cookie('auth_token', token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      secure: isProduction,
+      sameSite: isProduction ? 'strict' : 'lax',
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     });
 
@@ -181,7 +201,9 @@ export class AuthController {
   @ApiOperation({ summary: 'Get all linked OAuth accounts' })
   @ApiResponse({ status: 200, description: 'Returns list of linked accounts' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  async getLinkedAccounts(@Req() req: any) {
+  async getLinkedAccounts(
+    @Req() req: AuthorizedRequest,
+  ): Promise<LinkedAccountResponse[]> {
     return await this.authService.getLinkedAccounts(req.user.id);
   }
 
@@ -193,11 +215,17 @@ export class AuthController {
   @ApiResponse({ status: 200, description: 'Provider unlinked successfully' })
   @ApiResponse({ status: 400, description: 'Provider not linked' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  async unlinkAccount(@Req() req: any, @Param('provider') provider: string) {
+  async unlinkAccount(
+    @Req() req: AuthorizedRequest,
+    @Param('provider') provider: string,
+  ) {
+    if (!['GITHUB', 'JIRA'].includes(provider.toUpperCase())) {
+      throw new BadRequestException('Invalid provider');
+    }
     const providerEnum = provider.toUpperCase();
     return await this.authService.unlinkOAuthAccount(
       req.user.id,
-      providerEnum as any,
+      providerEnum as IntegrationProvider,
     );
   }
 }

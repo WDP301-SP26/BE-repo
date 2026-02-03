@@ -3,6 +3,7 @@ import {
   ConflictException,
   Injectable,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { AuthProvider, IntegrationProvider, User } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
@@ -10,6 +11,12 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { HttpService } from '@nestjs/axios';
+
+export interface JwtPayload {
+  sub: string; // userId
+  email: string;
+  role: string;
+}
 
 export interface OAuthProfile {
   id: string; // Provider's user ID
@@ -25,6 +32,31 @@ export interface UserTokenPayloadDto {
   full_name: string | null;
   student_id: string | null;
   role: string;
+  created_at: Date;
+}
+
+export interface UserResponse {
+  id: string;
+  email: string;
+  full_name: string | null;
+  student_id: string | null;
+  role: string;
+}
+
+export interface AuthResponse {
+  user: UserTokenPayloadDto;
+  access_token: string;
+}
+
+export interface LoginResponse {
+  user: UserResponse;
+  access_token: string;
+}
+
+export interface LinkedAccountResponse {
+  provider: string;
+  provider_username: string | null;
+  provider_email: string | null;
   created_at: Date;
 }
 
@@ -56,11 +88,12 @@ export class AuthService {
     private prisma: PrismaService,
     private jwtService: JwtService,
     private httpService: HttpService,
+    private configService: ConfigService,
   ) {}
 
   // ============ Email/Password Authentication ============
 
-  async register(registerDto: RegisterDto) {
+  async register(registerDto: RegisterDto): Promise<AuthResponse> {
     // Check if email exists
     const existingUser = await this.prisma.user.findUnique({
       where: { email: registerDto.email },
@@ -98,7 +131,7 @@ export class AuthService {
     };
   }
 
-  async login(loginDto: LoginDto) {
+  async login(loginDto: LoginDto): Promise<LoginResponse> {
     const user: User | null = await this.validateUser(
       loginDto.email,
       loginDto.password,
@@ -123,14 +156,16 @@ export class AuthService {
       created_at: user.created_at,
     };
 
+    const userResponse: UserResponse = {
+      id: user.id,
+      email: user.email,
+      full_name: user.full_name,
+      student_id: user.student_id,
+      role: user.role,
+    };
+
     return {
-      user: {
-        id: user.id,
-        email: user.email,
-        full_name: user.full_name,
-        student_id: user.student_id,
-        role: user.role,
-      },
+      user: userResponse,
       access_token: this.generateJwtToken(userTokenPayloadDto),
     };
   }
@@ -268,7 +303,7 @@ export class AuthService {
     }
 
     // Create a new user from OAuth profile
-    const newUser = await this.prisma.user.create({
+    const newUser: User = await this.prisma.user.create({
       data: {
         email:
           profile.email ||
@@ -322,8 +357,12 @@ export class AuthService {
   // ============ GitHub OAuth Manual Flow ============
 
   async handleGitHubCallback(code: string) {
-    const clientId = process.env.GH_CLIENT_ID;
-    const clientSecret = process.env.GH_CLIENT_SECRET;
+    const clientId = this.configService.get<string>('GH_CLIENT_ID');
+    const clientSecret = this.configService.get<string>('GH_CLIENT_SECRET');
+
+    if (!clientId || !clientSecret) {
+      throw new BadRequestException('GitHub OAuth is not configured');
+    }
 
     try {
       // Step 1: Exchange code for access token
@@ -407,7 +446,7 @@ export class AuthService {
   // ============ JWT Token Generation ============
 
   generateJwtToken(user: UserTokenPayloadDto) {
-    const payload = {
+    const payload: JwtPayload = {
       sub: user.id,
       email: user.email,
       role: user.role,
