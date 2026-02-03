@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -7,6 +8,7 @@ import {
   HttpStatus,
   Param,
   Post,
+  Query,
   Req,
   Res,
   UseGuards,
@@ -20,12 +22,12 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { randomUUID } from 'crypto';
 import type { Request, Response } from 'express';
+import { RedisService } from 'src/redis/redis.service';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
-import { GitHubOAuthGuard } from './guards/github-oauth.guard';
-import { JiraOAuthGuard } from './guards/jira-oauth.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from './guards/optional-jwt-auth.guard';
 
@@ -35,6 +37,7 @@ export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly configService: ConfigService,
+    private readonly redisService: RedisService,
   ) {}
 
   // ============ Email/Password Authentication ============
@@ -64,26 +67,65 @@ export class AuthController {
   // ============ GitHub OAuth ============
 
   @Get('github')
-  @UseGuards(OptionalJwtAuthGuard, GitHubOAuthGuard)
+  @UseGuards(OptionalJwtAuthGuard)
   @ApiOperation({
     summary: 'Initiate GitHub OAuth flow (❌ Do not use "Try it out")',
     description:
       '<b>Note:</b> Do not use the "Try it out" button here. It will fail with a CORS error because it tries to fetch the GitHub login page. <br />👉 <b>Open this URL in a new browser tab instead:</b> <a href="/api/auth/github" target="_blank">/api/auth/github</a>',
   })
   @ApiResponse({ status: 302, description: 'Redirects to GitHub OAuth' })
-  async githubAuth() {
-    // Guard redirects to GitHub OAuth
+  async githubAuth(
+    @Query('redirect_uri') redirectUri: string,
+    @Res() res: Response,
+  ) {
+    // Validate redirect_uri
+    const allowedOrigins = [
+      'http://localhost:3000',
+      'http://localhost:5173',
+      'https://jihub.vercel.app',
+    ];
+
+    if (!redirectUri || !allowedOrigins.includes(redirectUri)) {
+      throw new BadRequestException('Invalid or missing redirect_uri');
+    }
+
+    // Generate state and store redirect_uri
+    const state = randomUUID();
+    await this.redisService.setOAuthState(state, redirectUri);
+
+    // Build GitHub OAuth URL with state parameter
+    const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${this.configService.get(
+      'GH_CLIENT_ID',
+    )}&redirect_uri=${encodeURIComponent(
+      this.configService.get<string>('GH_CALLBACK_URL') || '',
+    )}&scope=user:email read:user&state=${state}`;
+
+    res.redirect(githubAuthUrl);
   }
 
   @Get('github/callback')
-  @UseGuards(OptionalJwtAuthGuard, GitHubOAuthGuard)
   @ApiOperation({ summary: 'GitHub OAuth callback (internal use)' })
   @ApiResponse({
     status: 302,
     description: 'Sets auth cookie and redirects to frontend',
   })
-  githubCallback(@Req() req: Request, @Res() res: Response) {
-    const user = req.user;
+  async githubCallback(
+    @Query('code') code: string,
+    @Query('state') state: string,
+    @Res() res: Response,
+  ) {
+    // Retrieve redirect_uri from Redis using state
+    const redirectUri = await this.redisService.getOAuthState(state);
+
+    if (!redirectUri) {
+      throw new BadRequestException('Invalid or expired OAuth state');
+    }
+
+    // Delete state from Redis (one-time use)
+    await this.redisService.deleteOAuthState(state);
+
+    // Handle GitHub OAuth callback manually (exchange code for user)
+    const user = await this.authService.handleGitHubCallback(code);
     const token = this.authService.generateJwtToken(user);
 
     // Set secure httpOnly cookie
@@ -94,50 +136,33 @@ export class AuthController {
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     });
 
-    // Redirect to frontend without token in URL
-    const frontendUrl =
-      this.configService.get<string>('FRONTEND_URL') || 'http://localhost:3000';
-    res.redirect(`${frontendUrl}/auth/callback`);
+    // Redirect to the original redirect_uri from Redis
+    res.redirect(`${redirectUri}/auth/callback`);
   }
 
-  // ============ Jira OAuth ============
+  // ============ Jira OAuth (DISABLED - Requires HTTPS) ============
+  // TODO: Enable when domain + HTTPS is configured
+  // Jira/Atlassian requires HTTPS callback URLs
 
+  /*
   @Get('jira')
-  @UseGuards(OptionalJwtAuthGuard, JiraOAuthGuard)
   @ApiOperation({
-    summary: 'Initiate Jira/Atlassian OAuth flow (❌ Do not use "Try it out")',
+    summary: 'Initiate Jira/Atlassian OAuth flow (❌ DISABLED - Requires HTTPS)',
     description:
-      '<b>Note:</b> Do not use the "Try it out" button here. It will fail with a CORS error because it tries to fetch the Jira login page. <br />👉 <b>Open this URL in a new browser tab instead:</b> <a href="/api/auth/jira" target="_blank">/api/auth/jira</a>',
+      '<b>Note:</b> Jira OAuth is currently disabled. Atlassian requires HTTPS callback URLs. Please configure a domain with SSL certificate first.',
   })
-  @ApiResponse({ status: 302, description: 'Redirects to Jira OAuth' })
+  @ApiResponse({ status: 501, description: 'Not implemented - requires HTTPS' })
   async jiraAuth() {
-    // Guard redirects to Jira OAuth
+    throw new BadRequestException('Jira OAuth requires HTTPS. Please configure domain + SSL first.');
   }
 
   @Get('jira/callback')
-  @UseGuards(OptionalJwtAuthGuard, JiraOAuthGuard)
-  @ApiOperation({ summary: 'Jira OAuth callback (internal use)' })
-  @ApiResponse({
-    status: 302,
-    description: 'Sets auth cookie and redirects to frontend',
-  })
+  @ApiOperation({ summary: 'Jira OAuth callback (DISABLED)' })
+  @ApiResponse({ status: 501, description: 'Not implemented - requires HTTPS' })
   jiraCallback(@Req() req: Request, @Res() res: Response) {
-    const user = req.user;
-    const token = this.authService.generateJwtToken(user);
-
-    // Set secure httpOnly cookie
-    res.cookie('auth_token', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-    });
-
-    // Redirect to frontend without token in URL
-    const frontendUrl =
-      this.configService.get<string>('FRONTEND_URL') || 'http://localhost:3000';
-    res.redirect(`${frontendUrl}/auth/callback`);
+    throw new BadRequestException('Jira OAuth requires HTTPS. Please configure domain + SSL first.');
   }
+  */
 
   // ============ Account Management ============
 
