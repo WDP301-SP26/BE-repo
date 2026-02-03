@@ -4,13 +4,14 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { AuthProvider, IntegrationProvider } from '@prisma/client';
+import { AuthProvider, IntegrationProvider, User } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { HttpService } from '@nestjs/axios';
 
-interface OAuthProfile {
+export interface OAuthProfile {
   id: string; // Provider's user ID
   username?: string;
   email?: string;
@@ -18,11 +19,43 @@ interface OAuthProfile {
   photos?: Array<{ value: string }>;
 }
 
+export interface UserTokenPayloadDto {
+  id: string;
+  email: string;
+  full_name: string | null;
+  student_id: string | null;
+  role: string;
+  created_at: Date;
+}
+
+export interface GitHubTokenResponse {
+  access_token: string;
+  token_type: string;
+  scope: string;
+  refresh_token?: string;
+}
+
+export interface GitHubUserProfile {
+  id: number;
+  login: string;
+  name: string;
+  email: string;
+  avatar_url: string;
+}
+
+export interface GitHubUserEmail {
+  email: string;
+  primary: boolean;
+  verified: boolean;
+  visibility?: string;
+}
+
 @Injectable()
 export class AuthService {
   constructor(
     private prisma: PrismaService,
     private jwtService: JwtService,
+    private httpService: HttpService,
   ) {}
 
   // ============ Email/Password Authentication ============
@@ -41,7 +74,7 @@ export class AuthService {
     const hashedPassword = await bcrypt.hash(registerDto.password, 10);
 
     // Create user
-    const user = await this.prisma.user.create({
+    const user: UserTokenPayloadDto = await this.prisma.user.create({
       data: {
         email: registerDto.email,
         password_hash: hashedPassword,
@@ -66,7 +99,10 @@ export class AuthService {
   }
 
   async login(loginDto: LoginDto) {
-    const user = await this.validateUser(loginDto.email, loginDto.password);
+    const user: User | null = await this.validateUser(
+      loginDto.email,
+      loginDto.password,
+    );
 
     if (!user) {
       throw new BadRequestException('Email hoặc mật khẩu không đúng');
@@ -78,6 +114,15 @@ export class AuthService {
       data: { last_login: new Date() },
     });
 
+    const userTokenPayloadDto: UserTokenPayloadDto = {
+      id: user.id,
+      email: user.email,
+      full_name: user.full_name,
+      student_id: user.student_id,
+      role: user.role,
+      created_at: user.created_at,
+    };
+
     return {
       user: {
         id: user.id,
@@ -86,7 +131,7 @@ export class AuthService {
         student_id: user.student_id,
         role: user.role,
       },
-      access_token: this.generateJwtToken(user),
+      access_token: this.generateJwtToken(userTokenPayloadDto),
     };
   }
 
@@ -192,7 +237,7 @@ export class AuthService {
     profile: OAuthProfile,
     accessToken: string,
     refreshToken?: string,
-  ) {
+  ): Promise<User> {
     // Check if this OAuth account is already linked
     const existingIntegration = await this.findUserByOAuthProvider(
       provider,
@@ -280,73 +325,88 @@ export class AuthService {
     const clientId = process.env.GH_CLIENT_ID;
     const clientSecret = process.env.GH_CLIENT_SECRET;
 
-    // Step 1: Exchange code for access token
-    const tokenResponse = await fetch(
-      'https://github.com/login/oauth/access_token',
-      {
-        method: 'POST',
+    try {
+      // Step 1: Exchange code for access token
+      const tokenResponse =
+        await this.httpService.axiosRef.post<GitHubTokenResponse>(
+          'https://github.com/login/oauth/access_token',
+          {
+            client_id: clientId,
+            client_secret: clientSecret,
+            code,
+          },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              Accept: 'application/json',
+            },
+          },
+        );
+
+      const tokenData: GitHubTokenResponse = tokenResponse.data;
+
+      if (!tokenData.access_token) {
+        throw new BadRequestException('Failed to exchange code for token');
+      }
+
+      // Step 2: Fetch user profile from GitHub
+      const profileResponse =
+        await this.httpService.axiosRef.get<GitHubUserProfile>(
+          'https://api.github.com/user',
+          {
+            headers: {
+              Authorization: `Bearer ${tokenData.access_token}`,
+              Accept: 'application/vnd.github+json',
+            },
+          },
+        );
+
+      const profile: GitHubUserProfile = profileResponse.data;
+
+      // Step 3: Fetch user emails
+      const emailResponse = await this.httpService.axiosRef.get<
+        GitHubUserEmail[]
+      >('https://api.github.com/user/emails', {
         headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
+          Authorization: `Bearer ${tokenData.access_token}`,
+          Accept: 'application/vnd.github+json',
         },
-        body: JSON.stringify({
-          client_id: clientId,
-          client_secret: clientSecret,
-          code,
-        }),
-      },
-    );
+      });
 
-    const tokenData = await tokenResponse.json();
+      const emails = emailResponse.data;
+      const primaryEmail = emails.find(
+        (e: GitHubUserEmail) => e.primary,
+      )!.email;
 
-    if (!tokenData.access_token) {
-      throw new BadRequestException('Failed to exchange code for token');
+      // Step 4: Create OAuth profile
+      const oauthProfile = {
+        id: String(profile.id),
+        username: profile.login,
+        email: primaryEmail,
+        displayName: profile.name,
+        photos: profile.avatar_url ? [{ value: profile.avatar_url }] : [],
+      };
+
+      // Step 5: Find or create user
+      const user = await this.findOrCreateOAuthUser(
+        IntegrationProvider.GITHUB,
+        oauthProfile,
+        tokenData.access_token,
+        tokenData.refresh_token,
+      );
+
+      return user;
+    } catch (error) {
+      const serviceName = this.constructor.name;
+      const methodName = this.handleGitHubCallback.name;
+      console.error(`[${serviceName} - ${methodName}]`, error);
+      throw new BadRequestException('GitHub OAuth failed. Please try again.');
     }
-
-    // Step 2: Fetch user profile from GitHub
-    const profileResponse = await fetch('https://api.github.com/user', {
-      headers: {
-        Authorization: `Bearer ${tokenData.access_token}`,
-        Accept: 'application/vnd.github+json',
-      },
-    });
-
-    const profile = await profileResponse.json();
-
-    // Step 3: Fetch user emails
-    const emailResponse = await fetch('https://api.github.com/user/emails', {
-      headers: {
-        Authorization: `Bearer ${tokenData.access_token}`,
-        Accept: 'application/vnd.github+json',
-      },
-    });
-
-    const emails = await emailResponse.json();
-    const primaryEmail = emails.find((e: any) => e.primary)?.email;
-
-    // Step 4: Create OAuth profile
-    const oauthProfile = {
-      id: String(profile.id),
-      username: profile.login,
-      email: primaryEmail,
-      displayName: profile.name,
-      photos: profile.avatar_url ? [{ value: profile.avatar_url }] : [],
-    };
-
-    // Step 5: Find or create user
-    const user = await this.findOrCreateOAuthUser(
-      IntegrationProvider.GITHUB,
-      oauthProfile,
-      tokenData.access_token,
-      tokenData.refresh_token,
-    );
-
-    return user;
   }
 
   // ============ JWT Token Generation ============
 
-  generateJwtToken(user: any) {
+  generateJwtToken(user: UserTokenPayloadDto) {
     const payload = {
       sub: user.id,
       email: user.email,
