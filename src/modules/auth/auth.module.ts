@@ -17,9 +17,9 @@ import { HttpModule } from '@nestjs/axios';
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => {
-        const expiresIn = configService.get<string>('JWT_EXPIRES_IN') || '7d';
+        const expiresIn = configService.get<string>('JWT_EXPIRES_IN', '7d');
         return {
-          secret: configService.get<string>('JWT_SECRET') || 'your-secret-key',
+          secret: configService.get<string>('JWT_SECRET', 'your-secret-key'),
           signOptions: { expiresIn } as unknown, // Type assertion for string values like '7d'
         } as JwtModuleOptions;
       },
