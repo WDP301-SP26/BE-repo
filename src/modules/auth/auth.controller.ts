@@ -22,14 +22,15 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { IntegrationProvider } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import type { Request, Response } from 'express';
 import { RedisService } from '../../redis/redis.service';
 import {
-  AuthService,
   AuthResponse,
-  LoginResponse,
+  AuthService,
   LinkedAccountResponse,
+  LoginResponse,
 } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
@@ -38,7 +39,6 @@ import {
   OptionalJwtAuthGuard,
   RequestUser,
 } from './guards/optional-jwt-auth.guard';
-import { IntegrationProvider } from '@prisma/client';
 
 export interface AuthorizedRequest extends Request {
   user: RequestUser;
@@ -227,5 +227,14 @@ export class AuthController {
       req.user.id,
       providerEnum as IntegrationProvider,
     );
+  }
+
+  @Post('logout')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Logout user and clear auth cookie' })
+  @ApiResponse({ status: 200, description: 'Logged out successfully' })
+  logout(@Res() res: Response) {
+    res.clearCookie('auth_token');
+    return res.json({ message: 'Logged out successfully' });
   }
 }
