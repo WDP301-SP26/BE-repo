@@ -55,11 +55,10 @@ async function bootstrap() {
       }),
     );
 
-    // Swagger setup
-    const swaggerConfig = getDocumentBuilder();
-    const documentFactory = SwaggerModule.createDocument(app, swaggerConfig);
-
-    SwaggerModule.setup('api/docs', app, documentFactory, swaggerUiOptions);
+  // Swagger setup
+  const swaggerConfig = getDocumentBuilder();
+  const documentFactory = SwaggerModule.createDocument(app, swaggerConfig);
+  SwaggerModule.setup('api-docs', app, documentFactory, swaggerUiOptions);
 
     const port = configService.get<number>('PORT', 3000);
     const prismaStudioPort = configService.get<number>(
