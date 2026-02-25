@@ -1,7 +1,7 @@
 [![Build and Test](https://github.com/WDP301-SP26/BE-repo/actions/workflows/build-and-test.yml/badge.svg)](https://github.com/WDP301-SP26/BE-repo/actions/workflows/build-and-test.yml)
 [![Test and Build Docker](https://github.com/WDP301-SP26/BE-repo/actions/workflows/test-build-docker.yml/badge.svg)](https://github.com/WDP301-SP26/BE-repo/actions/workflows/test-build-docker.yml)
 
-# WDP391 Backend API
+# WDP301 Backend API
 
 A robust backend API built with NestJS framework, featuring comprehensive authentication, OAuth 2.0 integration, and modern development practices.
 
@@ -36,7 +36,10 @@ A robust backend API built with NestJS framework, featuring comprehensive authen
 - ✅ **Hybrid Authentication** - Combine email/password with OAuth providers
 - ✅ **Swagger API Documentation** - Interactive API documentation with testing interface
 - ✅ **Docker Support** - Containerized development and deployment
-- ✅ **Database Migrations** - Version-controlled schema management with Prisma
+- ✅ **Database Migrations** - Version-controlled schema management with TypeORM
+- ✅ **Group Management** - CRUD operations + member management with role-based authorization
+- ✅ **Redis Caching** - Session and data caching with Redis
+- ✅ **Role-Based Access Control** - Student, Group Leader, Lecturer, Admin roles
 - ✅ **Health Checks** - Application health monitoring endpoints
 - ✅ **CI/CD Pipelines** - Automated testing and Docker builds
 
@@ -49,7 +52,8 @@ A robust backend API built with NestJS framework, featuring comprehensive authen
 | **Framework** | NestJS |
 | **Language** | TypeScript |
 | **Database** | PostgreSQL 15 |
-| **ORM** | Prisma |
+| **ORM** | TypeORM |
+| **Caching** | Redis (ioredis) |
 | **Authentication** | JWT, Passport.js |
 | **OAuth Providers** | GitHub, Jira/Atlassian |
 | **API Documentation** | Swagger/OpenAPI |
@@ -88,10 +92,10 @@ cp .env.example .env
 docker-compose up -d
 
 # 4. Run database migrations
-docker exec -it wdp391-api npx prisma migrate deploy
+docker exec -it wdp391-api npm run typeorm:migration:run
 
 # 5. Open Swagger documentation
-# Visit: http://localhost:3000/api
+# Visit: http://localhost:3000/api-docs
 ```
 
 **That's it!** Your API is running at `http://localhost:3000`
@@ -123,17 +127,14 @@ docker run -d \
   -p 5432:5432 \
   postgres:15-alpine
 
-# 5. Generate Prisma client
-npx prisma generate
+# 5. Run database migrations
+npm run typeorm:migration:run
 
-# 6. Run database migrations
-npx prisma migrate deploy
-
-# 7. Start development server
+# 6. Start development server
 npm run start:dev
 
-# 8. Open Swagger documentation
-# Visit: http://localhost:3000/api
+# 7. Open Swagger documentation
+# Visit: http://localhost:3000/api-docs
 ```
 
 ---
@@ -163,6 +164,14 @@ JIRA_CALLBACK_URL=http://localhost:3000/api/auth/jira/callback
 # Frontend URL (for OAuth redirects)
 FRONTEND_URL=http://localhost:5173
 
+# Redis Configuration
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_PASSWORD=
+
+# CORS Configuration
+ALLOWED_CORS_ORIGINS=http://localhost:3000
+
 # Server Configuration
 PORT=3000
 NODE_ENV=development
@@ -177,33 +186,20 @@ NODE_ENV=development
 
 ## 🗄️ Database Setup
 
-### View Database with Prisma Studio
-
-Prisma Studio provides a visual interface to browse and edit your database:
-
-```bash
-npx prisma studio
-```
-
-Visit: **http://localhost:5555**
-
 ### Common Database Commands
 
 ```bash
-# Generate Prisma client after schema changes
-npx prisma generate
+# Generate a new migration from entity changes
+npm run typeorm:migration:generate -- -n <MigrationName>
 
-# Create and apply migrations
-npx prisma migrate dev --name your_migration_name
+# Apply pending migrations
+npm run typeorm:migration:run
 
-# Apply existing migrations
-npx prisma migrate deploy
+# Revert the last applied migration
+npm run typeorm:migration:revert
 
-# Reset database (WARNING: Deletes all data)
-npx prisma migrate reset --force
-
-# View migration status
-npx prisma migrate status
+# Log the SQL that would be executed to sync schema
+npm run typeorm:schema:log
 ```
 
 ### Database Management Tools
@@ -273,7 +269,7 @@ You can also connect to PostgreSQL using GUI tools:
 ### Using Swagger UI (Recommended)
 
 1. **Start the server** (if not already running)
-2. **Open Swagger**: http://localhost:3000/api
+2. **Open Swagger**: http://localhost:3000/api-docs
 3. **Test Authentication Flow**:
 
 #### Step 1: Register a New User
@@ -308,17 +304,17 @@ You can also connect to PostgreSQL using GUI tools:
 
 ```bash
 # Register a user
-curl -X POST http://localhost:3000/auth/register \
+curl -X POST http://localhost:3000/api/auth/register \
   -H "Content-Type: application/json" \
   -d '{"email":"test@example.com","password":"pass123","full_name":"Test User","student_id":"SE123"}'
 
 # Login
-curl -X POST http://localhost:3000/auth/login \
+curl -X POST http://localhost:3000/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"test@example.com","password":"pass123"}'
 
 # Get profile (replace TOKEN with your access_token)
-curl http://localhost:3000/auth/me \
+curl http://localhost:3000/api/auth/me \
   -H "Authorization: Bearer TOKEN"
 ```
 
@@ -337,7 +333,7 @@ OAuth flows require browser interaction and cannot be tested directly in Swagger
    - Visit: `http://localhost:3000/api/auth/github` (or `/jira`)
    - Authorize to link account
 
-For more testing scenarios, explore the Swagger UI interface at http://localhost:3000/api
+For more testing scenarios, explore the Swagger UI interface at http://localhost:3000/api-docs
 
 ---
 
@@ -406,29 +402,20 @@ docker exec -it wdp391-api sh
 docker exec -it wdp391-postgres psql -U wdp391 -d wdp391_db
 ```
 
-### Prisma Commands
+### TypeORM Commands
 
 ```bash
-# Open Prisma Studio (visual database browser)
-npx prisma studio
+# Generate a new migration from entity changes
+npm run typeorm:migration:generate -- -n <MigrationName>
 
-# Generate Prisma Client
-npx prisma generate
+# Apply pending migrations
+npm run typeorm:migration:run
 
-# Create a new migration
-npx prisma migrate dev --name migration_name
+# Revert the last applied migration
+npm run typeorm:migration:revert
 
-# Apply migrations
-npx prisma migrate deploy
-
-# Reset database
-npx prisma migrate reset
-
-# Check migration status
-npx prisma migrate status
-
-# Format schema file
-npx prisma format
+# Log the SQL that would be executed to sync schema
+npm run typeorm:schema:log
 ```
 
 ---
@@ -503,18 +490,6 @@ docker-compose logs postgres
 
 ---
 
-### Prisma Client Not Generated
-
-```bash
-# Regenerate Prisma Client
-npx prisma generate
-
-# If using Docker, regenerate inside container
-docker exec -it wdp391-api npx prisma generate
-```
-
----
-
 ### OAuth Redirect Not Working
 
 1. **Check callback URLs** match exactly in:
@@ -557,14 +532,14 @@ docker-compose up -d --build
 ### Migration Errors
 
 ```bash
-# View migration status
-npx prisma migrate status
+# Apply pending migrations
+npm run typeorm:migration:run
 
-# Reset and reapply all migrations (WARNING: Deletes data)
-npx prisma migrate reset --force
+# Revert the last migration if something went wrong
+npm run typeorm:migration:revert
 
-# If migration files are out of sync
-npx prisma migrate resolve --applied "migration_name"
+# Check what SQL TypeORM would generate to sync schema
+npm run typeorm:schema:log
 ```
 
 For additional troubleshooting tips, check the Docker logs: `docker-compose logs -f`
@@ -576,29 +551,35 @@ For additional troubleshooting tips, check the Docker logs: `docker-compose logs
 ```
 BE-repo/
 ├── src/
-│   ├── modules/
-│   │   ├── auth/              # Authentication & OAuth
-│   │   │   ├── dto/           # Data Transfer Objects
-│   │   │   ├── guards/        # Auth guards (JWT, OAuth)
-│   │   │   ├── strategies/    # Passport strategies
-│   │   │   ├── auth.controller.ts
-│   │   │   ├── auth.service.ts
-│   │   │   └── auth.module.ts
-│   │   ├── users/             # User management
-│   │   └── prisma/            # Prisma service
-│   ├── main.ts                # Application entry point
-│   └── swagger.ts             # Swagger configuration
-├── prisma/
-│   ├── schema.prisma          # Database schema
-│   └── migrations/            # Database migrations
-├── docs/                      # Documentation
-│   ├── SWAGGER_TESTING_GUIDE.md
-│   └── DOCKER_SETUP_GUIDE.md
-├── test/                      # E2E tests
-├── docker-compose.yml         # Docker services configuration
-├── Dockerfile                 # Docker image configuration
-├── .env.example               # Environment variables template
-└── README.md                  # This file
+│   ├── main.ts                    # Application entry point
+│   ├── app.module.ts              # Root module (TypeORM config)
+│   ├── swagger.ts                 # Swagger configuration
+│   ├── entities/                  # TypeORM entity classes
+│   │   ├── user.entity.ts
+│   │   ├── integration-token.entity.ts
+│   │   ├── group.entity.ts
+│   │   ├── group-membership.entity.ts
+│   │   └── index.ts
+│   ├── common/
+│   │   ├── constants/             # Centralized error/success messages
+│   │   └── enums/                 # Shared enums (Role, AuthProvider, etc.)
+│   ├── database/
+│   │   ├── typeorm.config.ts      # TypeORM DataSource config (CLI migrations)
+│   │   └── migrations/            # Database migration files
+│   ├── health/                    # Health-check endpoint
+│   ├── redis/                     # Redis caching service
+│   └── modules/
+│       ├── auth/                  # Authentication & OAuth
+│       │   ├── dto/               # Data Transfer Objects
+│       │   ├── guards/            # Auth guards (JWT, Roles)
+│       │   ├── decorators/        # Custom decorators (@Roles)
+│       │   └── strategies/        # Passport strategies
+│       ├── users/                 # User management
+│       └── groups/                # Group management & memberships
+├── test/                          # E2E tests
+├── docker-compose.yml             # Docker services configuration
+├── Dockerfile                     # Docker image configuration
+└── README.md                      # This file
 ```
 
 ---
@@ -669,23 +650,11 @@ BE-repo/
 
 ## 🔗 Useful Links
 
-- **API Documentation (Swagger)**: http://localhost:3000/api
+- **API Documentation (Swagger)**: http://localhost:3000/api-docs
 - **Health Check**: http://localhost:3000/health
-- **Prisma Studio**: http://localhost:5555
 - **GitHub Repository**: https://github.com/WDP301-SP26/BE-repo
 
 ---
-
-## 🆘 Need Help?
-
-- Check the [Troubleshooting](#troubleshooting) section
-- Review the [Swagger Testing Guide](./docs/SWAGGER_TESTING_GUIDE.md)
-- Open an issue on GitHub
-- Contact the development team
-
----
-
-## 📝 License
 
 ## 🆘 Need Help?
 
