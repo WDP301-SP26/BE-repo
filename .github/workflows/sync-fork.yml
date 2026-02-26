@@ -1,0 +1,39 @@
+name: Sync Fork with Upstream
+
+on:
+  schedule:
+    # Chạy mỗi 10 phút
+    - cron: '*/10 * * * *'
+  workflow_dispatch: # Cho phép chạy thủ công từ GitHub Actions UI
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    # Chỉ chạy trên repo fork, không chạy trên repo gốc
+    if: github.repository_owner != github.event.organization.login
+
+    steps:
+      - name: Checkout fork repo
+        uses: actions/checkout@v4
+        with:
+          # Cần token có quyền push để đẩy code lên fork
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/${{ secrets.UPSTREAM_REPO }}.git || true
+          git fetch upstream
+
+      - name: Sync main branch
+        run: |
+          git checkout main
+          git merge upstream/main --no-edit --allow-unrelated-histories
+          git push origin main
+
+      - name: Sync develop branch (if exists)
+        run: |
+          git fetch upstream develop || exit 0
+          git checkout develop || git checkout -b develop upstream/develop
+          git merge upstream/develop --no-edit --allow-unrelated-histories || true
+          git push origin develop || true
