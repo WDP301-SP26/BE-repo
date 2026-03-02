@@ -22,10 +22,13 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'crypto';
 import type { Request, Response } from 'express';
+import { Repository } from 'typeorm';
 import { ERROR_MESSAGES } from '../../common/constants';
 import { IntegrationProvider } from '../../entities';
+import { User } from '../../entities/user.entity';
 import { RedisService } from '../../redis/redis.service';
 import {
   AuthResponse,
@@ -52,6 +55,7 @@ export class AuthController {
     private readonly authService: AuthService,
     private readonly configService: ConfigService,
     private readonly redisService: RedisService,
+    @InjectRepository(User) private readonly userRepository: Repository<User>,
   ) {}
 
   // ============ Email/Password Authentication ============
@@ -74,8 +78,23 @@ export class AuthController {
     description: 'Login successful, returns JWT token',
   })
   @ApiResponse({ status: 400, description: 'Invalid credentials' })
-  async login(@Body() loginDto: LoginDto): Promise<LoginResponse> {
-    return this.authService.login(loginDto);
+  async login(
+    @Body() loginDto: LoginDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<LoginResponse> {
+    const result = await this.authService.login(loginDto);
+
+    // Set secure httpOnly cookie to maintain session identically to OAuth flow
+    const isProduction =
+      this.configService.get<string>('NODE_ENV') === 'production';
+    res.cookie('auth_token', result.access_token, {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction ? 'strict' : 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
+
+    return result;
   }
 
   // ============ GitHub OAuth ============
@@ -112,7 +131,7 @@ export class AuthController {
     // Build GitHub OAuth URL with state parameter
     const clientId = this.configService.get<string>('GH_CLIENT_ID');
     const callbackUrl = this.configService.get<string>('GH_CALLBACK_URL', '');
-    const scope = 'user:email read:user';
+    const scope = 'user:email read:user repo';
 
     const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(callbackUrl)}&scope=${scope}&state=${state}`;
 
