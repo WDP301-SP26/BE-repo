@@ -96,8 +96,21 @@ export class GithubService {
           updated_at: r.updated_at,
         })),
       };
-    } catch (error) {
-      console.error('GitHub API error:', error);
+    } catch (error: any) {
+      console.error('GitHub API error:', error.message);
+      if (
+        error.response?.status === 401 ||
+        error.response?.status === 403 ||
+        error.response?.status === 404
+      ) {
+        await this.integrationTokenRepository.delete({
+          user_id: userId,
+          provider: IntegrationProvider.GITHUB,
+        });
+        throw new BadRequestException(
+          'GitHub token expired or invalid scopes. Please re-link your GitHub account.',
+        );
+      }
       throw new BadRequestException(
         'Failed to fetch repositories from GitHub APIs',
       );
@@ -158,11 +171,20 @@ export class GithubService {
           net_change: totalAdditions - totalDeletions,
         };
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error(
         `GitHub API error fetching stats for ${owner}/${repo}:`,
-        error,
+        error.message,
       );
+      if (error.response?.status === 401 || error.response?.status === 403) {
+        await this.integrationTokenRepository.delete({
+          user_id: userId,
+          provider: IntegrationProvider.GITHUB,
+        });
+        throw new BadRequestException(
+          'GitHub token expired or invalid scopes. Please re-link your GitHub account.',
+        );
+      }
       throw new BadRequestException(
         'Failed to fetch contributor stats from GitHub API',
       );
@@ -203,11 +225,20 @@ export class GithubService {
         message: item.commit.message,
         avatar_url: item.author?.avatar_url,
       }));
-    } catch (error) {
+    } catch (error: any) {
       console.error(
         `GitHub API error fetching commits for ${owner}/${repo}:`,
-        error,
+        error.message,
       );
+      if (error.response?.status === 401 || error.response?.status === 403) {
+        await this.integrationTokenRepository.delete({
+          user_id: userId,
+          provider: IntegrationProvider.GITHUB,
+        });
+        throw new BadRequestException(
+          'GitHub token expired or invalid scopes. Please re-link your GitHub account.',
+        );
+      }
       throw new BadRequestException('Failed to fetch commits from GitHub API');
     }
   }
