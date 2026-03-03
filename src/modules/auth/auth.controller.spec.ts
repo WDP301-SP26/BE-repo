@@ -1,12 +1,15 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { AuthController } from './auth.controller';
-import { AuthService, AuthResponse, LoginResponse } from './auth.service';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { RedisService } from '../../redis/redis.service';
-import { RegisterDto } from './dto/register.dto';
-import { LoginDto } from './dto/login.dto';
-import { ConflictException, BadRequestException } from '@nestjs/common';
+import { Test, TestingModule } from '@nestjs/testing';
+import { getRepositoryToken } from '@nestjs/typeorm';
+import { Response } from 'express';
 import { ERROR_MESSAGES } from '../../common/constants';
+import { User } from '../../entities/user.entity';
+import { RedisService } from '../../redis/redis.service';
+import { AuthController } from './auth.controller';
+import { AuthResponse, AuthService, LoginResponse } from './auth.service';
+import { LoginDto } from './dto/login.dto';
+import { RegisterDto } from './dto/register.dto';
 
 describe('AuthController', () => {
   let authController: AuthController;
@@ -37,6 +40,7 @@ describe('AuthController', () => {
         { provide: AuthService, useValue: mockAuthService },
         { provide: ConfigService, useValue: mockConfigService },
         { provide: RedisService, useValue: mockRedisService },
+        { provide: getRepositoryToken(User), useValue: {} },
       ],
     }).compile();
     authController = app.get<AuthController>(AuthController);
@@ -118,7 +122,8 @@ describe('AuthController', () => {
 
       mockAuthService.login.mockResolvedValue(mockResponse);
 
-      const result = await authController.login(loginDto);
+      const mockRes: Partial<Response> = { cookie: jest.fn() };
+      const result = await authController.login(loginDto, mockRes as Response);
 
       expect(spyLogin).toHaveBeenCalledWith(loginDto);
       expect(spyLogin).toHaveBeenCalledTimes(1);
@@ -136,12 +141,13 @@ describe('AuthController', () => {
         new BadRequestException(ERROR_MESSAGES.AUTH.INVALID_CREDENTIALS),
       );
 
-      await expect(authController.login(loginDto)).rejects.toThrow(
-        BadRequestException,
-      );
-      await expect(authController.login(loginDto)).rejects.toThrow(
-        ERROR_MESSAGES.AUTH.INVALID_CREDENTIALS,
-      );
+      const mockRes: Partial<Response> = { cookie: jest.fn() };
+      await expect(
+        authController.login(loginDto, mockRes as Response),
+      ).rejects.toThrow(BadRequestException);
+      await expect(
+        authController.login(loginDto, mockRes as Response),
+      ).rejects.toThrow(ERROR_MESSAGES.AUTH.INVALID_CREDENTIALS);
 
       expect(spyLogin).toHaveBeenCalledWith(loginDto);
     });
@@ -165,7 +171,8 @@ describe('AuthController', () => {
 
       mockAuthService.login.mockResolvedValue(mockResponse);
 
-      const result = await authController.login(loginDto);
+      const mockRes = { cookie: jest.fn() } as unknown as Response;
+      const result = await authController.login(loginDto, mockRes);
 
       expect(result).toHaveProperty('user');
       expect(result).toHaveProperty('access_token');
