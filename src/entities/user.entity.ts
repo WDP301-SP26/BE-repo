@@ -1,15 +1,19 @@
 import {
-  Entity,
   Column,
-  PrimaryGeneratedColumn,
   CreateDateColumn,
-  UpdateDateColumn,
+  Entity,
   OneToMany,
+  PrimaryGeneratedColumn,
+  UpdateDateColumn,
 } from 'typeorm';
-import { Role, AuthProvider } from '../common/enums';
-import { IntegrationToken } from './integration-token.entity';
-import { Group } from './group.entity';
+import { AuthProvider, Role } from '../common/enums';
+import { ClassMembership } from './class-membership.entity';
+import { Class } from './class.entity';
+import { DocumentSubmission } from './document-submission.entity';
 import { GroupMembership } from './group-membership.entity';
+import { Group } from './group.entity';
+import { IntegrationToken } from './integration-token.entity';
+import { Notification } from './notification.entity';
 
 @Entity('User')
 export class User {
@@ -57,4 +61,16 @@ export class User {
 
   @OneToMany(() => GroupMembership, (membership) => membership.user)
   memberships: GroupMembership[];
+
+  @OneToMany(() => Class, (cls) => cls.lecturer)
+  lectured_classes: Class[];
+
+  @OneToMany(() => ClassMembership, (membership) => membership.user)
+  class_memberships: ClassMembership[];
+
+  @OneToMany(() => Notification, (notification) => notification.user)
+  notifications: Notification[];
+
+  @OneToMany(() => DocumentSubmission, (submission) => submission.submittedBy)
+  submissions: DocumentSubmission[];
 }
