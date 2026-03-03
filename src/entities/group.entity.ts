@@ -1,16 +1,19 @@
 import {
-  Entity,
   Column,
-  PrimaryGeneratedColumn,
   CreateDateColumn,
-  UpdateDateColumn,
+  Entity,
+  JoinColumn,
   ManyToOne,
   OneToMany,
-  JoinColumn,
+  PrimaryGeneratedColumn,
+  UpdateDateColumn,
 } from 'typeorm';
 import { GroupStatus } from '../common/enums';
-import { User } from './user.entity';
+import { Class } from './class.entity';
+import { DocumentSubmission } from './document-submission.entity';
 import { GroupMembership } from './group-membership.entity';
+import { Topic } from './topic.entity';
+import { User } from './user.entity';
 
 @Entity('Group')
 export class Group {
@@ -19,6 +22,12 @@ export class Group {
 
   @Column({ type: 'varchar', length: 100 })
   name: string;
+
+  @Column({ type: 'uuid' })
+  class_id: string;
+
+  @Column({ type: 'uuid', nullable: true })
+  topic_id: string | null;
 
   @Column({ type: 'varchar', length: 100, nullable: true })
   project_name: string | null;
@@ -53,4 +62,15 @@ export class Group {
 
   @OneToMany(() => GroupMembership, (membership) => membership.group)
   members: GroupMembership[];
+
+  @ManyToOne(() => Class, (cls) => cls.groups)
+  @JoinColumn({ name: 'class_id' })
+  class: Class;
+
+  @ManyToOne(() => Topic, (topic) => topic.groups, { nullable: true })
+  @JoinColumn({ name: 'topic_id' })
+  topic: Topic;
+
+  @OneToMany(() => DocumentSubmission, (sub) => sub.group)
+  submissions: DocumentSubmission[];
 }
