@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { JiraController } from './jira.controller';
+import { JiraService } from './jira.service';
 
 describe('JiraController', () => {
   let controller: JiraController;
@@ -7,6 +8,7 @@ describe('JiraController', () => {
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [JiraController],
+      providers: [{ provide: JiraService, useValue: {} }],
     }).compile();
 
     controller = module.get<JiraController>(JiraController);
