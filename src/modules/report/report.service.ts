@@ -22,11 +22,19 @@ export class ReportService {
     private readonly projectLinkRepository: Repository<ProjectLink>,
     private readonly jiraService: JiraService,
     private readonly githubService: GithubService,
-  ) {
-    // Ideally this comes from ConfigService.
-    this.groq = new Groq({
-      apiKey: process.env.GROQ_API_KEY,
-    });
+  ) {}
+
+  private getGroqClient(): Groq {
+    if (!this.groq) {
+      const apiKey = process.env.GROQ_API_KEY;
+      if (!apiKey) {
+        throw new BadRequestException(
+          'GROQ_API_KEY environment variable is missing.',
+        );
+      }
+      this.groq = new Groq({ apiKey });
+    }
+    return this.groq;
   }
 
   async generateSrs(
@@ -69,7 +77,8 @@ ${JSON.stringify(rawJiraData)}
 Return only the markdown document. Do not add conversational text around it.`;
 
     // 3. Request Markdown generation via Groq
-    const chatCompletion = await this.groq.chat.completions.create({
+    const groqClient = this.getGroqClient();
+    const chatCompletion = await groqClient.chat.completions.create({
       messages: [{ role: 'user', content: prompt }],
       model: 'llama3-70b-8192',
       temperature: 0.5,
