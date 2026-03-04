@@ -10,6 +10,7 @@ import { ERROR_MESSAGES } from '../../common/constants';
 import {
   Group,
   GroupMembership,
+  GroupRepository,
   MembershipRole,
   Role,
   Topic,
@@ -34,6 +35,8 @@ export class GroupsService {
     private readonly userRepository: Repository<User>,
     @InjectRepository(Topic)
     private readonly topicRepository: Repository<Topic>,
+    @InjectRepository(GroupRepository)
+    private readonly groupRepoRepository: Repository<GroupRepository>,
     private readonly githubService: GithubService,
     private readonly jiraService: JiraService,
   ) {}
@@ -154,6 +157,8 @@ export class GroupsService {
     const qb = this.groupRepository
       .createQueryBuilder('group')
       .leftJoinAndSelect('group.topic', 'topic')
+      .leftJoinAndSelect('group.members', 'member', 'member.left_at IS NULL')
+      .leftJoinAndSelect('member.user', 'user')
       .loadRelationCountAndMap(
         'group.members_count',
         'group.members',
@@ -172,6 +177,12 @@ export class GroupsService {
       topic: g.topic,
       members_count: g.members_count ?? 0,
       status: g.status,
+      members:
+        g.members?.map((m: any) => ({
+          user_id: m.user_id,
+          full_name: m.user?.full_name,
+          role: m.role_in_group,
+        })) || [],
     }));
   }
 
@@ -549,5 +560,59 @@ export class GroupsService {
         ERROR_MESSAGES.GROUPS.ONLY_LEADERS_CAN_MANAGE,
       );
     }
+  }
+
+  // ── Repository management ──────────────────────────────
+
+  async getGroupRepos(groupId: string) {
+    return this.groupRepoRepository.find({
+      where: { group_id: groupId },
+      order: { created_at: 'ASC' },
+    });
+  }
+
+  async addGroupRepo(
+    groupId: string,
+    userId: string,
+    data: { repo_url: string; repo_name: string; repo_owner: string },
+  ) {
+    // Verify the group exists
+    const group = await this.groupRepository.findOne({
+      where: { id: groupId },
+    });
+    if (!group) {
+      throw new NotFoundException('Group not found');
+    }
+
+    // Check if repo already linked
+    const existing = await this.groupRepoRepository.findOne({
+      where: { group_id: groupId, repo_url: data.repo_url },
+    });
+    if (existing) {
+      throw new BadRequestException(
+        'This repository is already linked to this group',
+      );
+    }
+
+    const repo = this.groupRepoRepository.create({
+      group_id: groupId,
+      repo_url: data.repo_url,
+      repo_name: data.repo_name,
+      repo_owner: data.repo_owner,
+      added_by_id: userId,
+    });
+
+    return this.groupRepoRepository.save(repo);
+  }
+
+  async removeGroupRepo(groupId: string, repoId: string, userId: string) {
+    const repo = await this.groupRepoRepository.findOne({
+      where: { id: repoId, group_id: groupId },
+    });
+    if (!repo) {
+      throw new NotFoundException('Repository not found in this group');
+    }
+
+    await this.groupRepoRepository.delete({ id: repoId });
   }
 }

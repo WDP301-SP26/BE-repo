@@ -227,4 +227,37 @@ export class GroupsController {
       req.user.role as Role,
     );
   }
+
+  // ── Repository management ──────────────────────────────
+
+  @Get(':id/repos')
+  @ApiOperation({ summary: 'List all repositories linked to a group' })
+  @ApiParam({ name: 'id', description: 'Group UUID' })
+  async getGroupRepos(@Param('id', ParseUUIDPipe) id: string) {
+    return this.groupsService.getGroupRepos(id);
+  }
+
+  @Post(':id/repos')
+  @ApiOperation({ summary: 'Link a repository to a group (leader only)' })
+  @ApiParam({ name: 'id', description: 'Group UUID' })
+  async addGroupRepo(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: AuthorizedRequest,
+    @Body() body: { repo_url: string; repo_name: string; repo_owner: string },
+  ) {
+    return this.groupsService.addGroupRepo(id, req.user.id, body);
+  }
+
+  @Delete(':id/repos/:repoId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Remove a repository from a group (leader only)' })
+  @ApiParam({ name: 'id', description: 'Group UUID' })
+  @ApiParam({ name: 'repoId', description: 'GroupRepository UUID' })
+  async removeGroupRepo(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('repoId', ParseUUIDPipe) repoId: string,
+    @Req() req: AuthorizedRequest,
+  ) {
+    return this.groupsService.removeGroupRepo(id, repoId, req.user.id);
+  }
 }
