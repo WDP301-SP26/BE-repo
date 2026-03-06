@@ -8,6 +8,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import {
   Group,
   GroupMembership,
+  GroupRepository,
   GroupStatus,
   MembershipRole,
   Role,
@@ -134,6 +135,7 @@ describe('GroupsService', () => {
         },
         { provide: getRepositoryToken(User), useValue: userRepo },
         { provide: getRepositoryToken(Topic), useValue: {} },
+        { provide: getRepositoryToken(GroupRepository), useValue: {} },
         { provide: GithubService, useValue: {} },
         { provide: JiraService, useValue: {} },
       ],
