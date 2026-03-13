@@ -10,20 +10,24 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { AuthorizedRequest } from '../auth/auth.controller';
+import { Role } from '../../common/enums';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { DocumentSubmissionService } from './document-submission.service';
 import { CreateDocumentSubmissionDto } from './dto/create-submission.dto';
 import { GradeDocumentDto } from './dto/grade-submission.dto';
 
 @ApiTags('Document Submissions')
 @Controller('documents')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @ApiBearerAuth()
 export class DocumentSubmissionController {
   constructor(private readonly submissionService: DocumentSubmissionService) {}
 
   @Get()
-  @ApiOperation({ summary: 'Get all submissions (Lecturers)' })
+  @Roles(Role.LECTURER)
+  @ApiOperation({ summary: 'Get all submissions (Lecturers only)' })
   async getAllSubmissions() {
     return this.submissionService.getAllSubmissions();
   }
@@ -45,6 +49,7 @@ export class DocumentSubmissionController {
   }
 
   @Patch(':id/grade')
+  @Roles(Role.LECTURER)
   @ApiOperation({ summary: 'Grade or update document status (Lecturer only)' })
   async gradeDocument(
     @Req() req: AuthorizedRequest,
