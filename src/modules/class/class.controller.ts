@@ -9,6 +9,7 @@ import {
   UploadedFile,
   UseGuards,
   UseInterceptors,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
@@ -18,8 +19,11 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { Role } from '../../common/enums';
 import type { AuthorizedRequest } from '../auth/auth.controller';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
 import { ClassService } from './class.service';
 import { CreateClassDto } from './dto/create-class.dto';
 import { ImportStudentsResponseDto } from './dto/import-students-response.dto';
@@ -28,12 +32,13 @@ import { parseStudentFile } from './utils/file-parser.util';
 
 @ApiTags('Classes')
 @Controller('classes')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @ApiBearerAuth()
 export class ClassController {
   constructor(private readonly classService: ClassService) {}
 
   @Post()
+  @Roles(Role.LECTURER)
   @ApiOperation({ summary: 'Create a new class (Lecturer only)' })
   @ApiResponse({
     status: 201,
@@ -70,6 +75,7 @@ export class ClassController {
   }
 
   @Post(':id/import-students')
+  @Roles(Role.LECTURER)
   @ApiOperation({
     summary: 'Import students from CSV/XLSX file (Lecturer only)',
   })
@@ -98,11 +104,17 @@ export class ClassController {
   )
   async importStudents(
     @Req() req: AuthorizedRequest,
-    @Param('id') classId: string,
-    @UploadedFile() file: Express.Multer.File,
+    @Param('id', ParseUUIDPipe) classId: string,
+    @UploadedFile()
+    file?: {
+      buffer: Buffer;
+      mimetype: string;
+    },
   ) {
-    if (!file) {
-      throw new BadRequestException('File is required');
+    if (!file || !file.buffer) {
+      throw new BadRequestException(
+        'File is required and must contain content',
+      );
     }
 
     const rows = await parseStudentFile(file.buffer, file.mimetype);

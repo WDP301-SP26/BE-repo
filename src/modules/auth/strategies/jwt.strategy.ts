@@ -40,10 +40,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
           const token = request?.cookies?.['auth_token'] as unknown;
           return typeof token === 'string' ? token : null;
         },
-        (request: Request): string | null => {
-          const token = request?.query?.['token'];
-          return typeof token === 'string' ? token : null;
-        },
       ]),
       ignoreExpiration: false,
       secretOrKey: configService.get<string>('JWT_SECRET', 'your-secret-key'),

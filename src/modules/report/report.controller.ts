@@ -9,12 +9,16 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { AuthorizedRequest } from '../auth/auth.controller';
+import { Role } from '../../common/enums';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { ReportService } from './report.service';
 
 @ApiTags('Reports')
 @Controller('reports')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(Role.LECTURER, Role.STUDENT)
 @ApiBearerAuth()
 export class ReportController {
   constructor(private readonly reportService: ReportService) {}

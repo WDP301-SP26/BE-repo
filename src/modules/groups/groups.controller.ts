@@ -39,7 +39,7 @@ import { GroupsService } from './groups.service';
 
 @ApiTags('Groups')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('groups')
 export class GroupsController {
   constructor(private readonly groupsService: GroupsService) {}
@@ -96,7 +96,7 @@ export class GroupsController {
   @ApiResponse({ status: 200, type: GroupDetailEntity })
   @ApiResponse({ status: 403, description: 'Not a member of this group' })
   @ApiResponse({ status: 404, description: 'Group not found' })
-  async findOne(@Param('id', ParseUUIDPipe) id: string, @Req() req: any) {
+  async findOne(@Param('id', ParseUUIDPipe) id: string, @Req() req: AuthorizedRequest) {
     return this.groupsService.findOne(id, req.user.id, req.user.role as Role);
   }
 
@@ -108,7 +108,7 @@ export class GroupsController {
   @ApiResponse({ status: 404, description: 'Group not found' })
   async update(
     @Param('id', ParseUUIDPipe) id: string,
-    @Req() req: any,
+    @Req() req: AuthorizedRequest,
     @Body() dto: UpdateGroupDto,
   ) {
     return this.groupsService.update(
@@ -155,7 +155,7 @@ export class GroupsController {
   @ApiResponse({ status: 404, description: 'Group or user not found' })
   async addMember(
     @Param('id', ParseUUIDPipe) id: string,
-    @Req() req: any,
+    @Req() req: AuthorizedRequest,
     @Body() dto: AddMemberDto,
   ) {
     return this.groupsService.addMember(
@@ -174,7 +174,7 @@ export class GroupsController {
   @ApiResponse({ status: 204, description: 'Left the group' })
   @ApiResponse({ status: 400, description: 'Cannot leave as last leader' })
   @ApiResponse({ status: 404, description: 'Not a member of this group' })
-  async leaveGroup(@Param('id', ParseUUIDPipe) id: string, @Req() req: any) {
+  async leaveGroup(@Param('id', ParseUUIDPipe) id: string, @Req() req: AuthorizedRequest) {
     return this.groupsService.leaveGroup(id, req.user.id);
   }
 
@@ -191,7 +191,7 @@ export class GroupsController {
   async updateMember(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('userId', ParseUUIDPipe) userId: string,
-    @Req() req: any,
+    @Req() req: AuthorizedRequest,
     @Body() dto: UpdateMemberDto,
   ) {
     return this.groupsService.updateMember(
@@ -218,7 +218,7 @@ export class GroupsController {
   async removeMember(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('userId', ParseUUIDPipe) userId: string,
-    @Req() req: any,
+    @Req() req: AuthorizedRequest,
   ) {
     return this.groupsService.removeMember(
       id,
