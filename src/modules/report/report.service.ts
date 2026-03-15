@@ -176,18 +176,22 @@ Return only the markdown document. Do not add conversational text around it.`;
     }
 
     const allStats: any[] = [];
+    let anyComputing = false;
 
     // Fetch stats for all linked repositories
     for (const repo of repos) {
       try {
-        const stats = await this.githubService.getRepoContributorsStats(
+        const result = await this.githubService.getRepoContributorsStats(
           repo.added_by_id,
           repo.repo_owner,
           repo.repo_name,
         );
+        if (result.computing) {
+          anyComputing = true;
+        }
         allStats.push({
           repository: `${repo.repo_owner}/${repo.repo_name}`,
-          contributors: stats,
+          contributors: result.contributors,
         });
       } catch (e) {
         // Skip failed ones quietly or log
@@ -197,6 +201,7 @@ Return only the markdown document. Do not add conversational text around it.`;
     return {
       groupName: group.name,
       repositories: allStats,
+      computing: anyComputing,
     };
   }
 }

@@ -67,11 +67,12 @@ export class GithubController {
     @Param('owner') owner: string,
     @Param('repo') repo: string,
   ) {
-    return this.githubService.getRepoContributorsStats(
+    const result = await this.githubService.getRepoContributorsStats(
       req.user.id,
       owner,
       repo,
     );
+    return result.contributors;
   }
 
   @Get('repos/:owner/:repo/commits')
