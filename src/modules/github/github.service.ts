@@ -130,7 +130,8 @@ export class GithubService {
     try {
       let statsResponse: GitHubContributorStats[] = [];
       let retries = 0;
-      const maxRetries = 3;
+      const maxRetries = 5;
+      let exhaustedRetries = false;
 
       while (retries < maxRetries) {
         const response = await lastValueFrom(
@@ -145,11 +146,13 @@ export class GithubService {
           ),
         );
 
-        // GitHub API returns 202 if compiling stats. We should wait and retry.
+        // GitHub API returns 202 if compiling stats. Wait with exponential backoff and retry.
         if (response.status === 202) {
           retries++;
-          // Wait 2 seconds before retrying
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+          if (retries < maxRetries) {
+            const delay = Math.min(1000 * Math.pow(2, retries - 1), 16000);
+            await new Promise((resolve) => setTimeout(resolve, delay));
+          }
           continue;
         }
 
@@ -157,7 +160,11 @@ export class GithubService {
         break;
       }
 
-      return statsResponse.map((stat) => {
+      if (retries >= maxRetries) {
+        exhaustedRetries = true;
+      }
+
+      const contributors = statsResponse.map((stat) => {
         const totalAdditions = stat.weeks.reduce((sum, w) => sum + w.a, 0);
         const totalDeletions = stat.weeks.reduce((sum, w) => sum + w.d, 0);
 
@@ -171,6 +178,8 @@ export class GithubService {
           net_change: totalAdditions - totalDeletions,
         };
       });
+
+      return { contributors, computing: exhaustedRetries };
     } catch (error: any) {
       console.error(
         `GitHub API error fetching stats for ${owner}/${repo}:`,
