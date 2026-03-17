@@ -12,6 +12,7 @@ on:
 env:
   REGISTRY: registry.digitalocean.com
   IMAGE_NAME: ${{ secrets.DO_REGISTRY_NAME }}/be-repo
+  REPO_NAME: be-repo
 
 jobs:
   build-and-push:
@@ -57,6 +58,32 @@ jobs:
         run: |
           rm -rf /tmp/.buildx-cache
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
+      - name: Prune old registry tags (keep latest + current sha)
+        if: always()
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          KEEP_TAGS="latest $GITHUB_SHA"
+          echo "Keeping tags: $KEEP_TAGS"
+
+          TAGS=$(doctl registry repository list-tags "$REPO_NAME" --format Tag --no-header || true)
+          if [ -z "$TAGS" ]; then
+            echo "No tags found or list failed."
+            exit 0
+          fi
+
+          for tag in $TAGS; do
+            if echo "$KEEP_TAGS" | grep -qw "$tag"; then
+              echo "Keeping $tag"
+            else
+              echo "Deleting $tag"
+              doctl registry repository delete-tag "$REPO_NAME" "$tag" --force || true
+            fi
+          done
+
+          # Trigger garbage collection to reclaim storage
+          doctl registry garbage-collection start --force || true
 
   deploy:
     name: Deploy to DigitalOcean Droplet
