@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -28,6 +29,8 @@ import { UpdateMemberDto } from './dto/update-member.dto';
 
 @Injectable()
 export class GroupsService {
+  private readonly logger = new Logger(GroupsService.name);
+
   constructor(
     @InjectRepository(Group)
     private readonly groupRepository: Repository<Group>,
@@ -74,6 +77,7 @@ export class GroupsService {
 
     const qb = this.groupRepository
       .createQueryBuilder('group')
+      .distinct(true)
       .loadRelationCountAndMap(
         'group.members_count',
         'group.members',
@@ -739,6 +743,26 @@ export class GroupsService {
         },
       },
       warnings,
+    };
+  }
+
+  async getIntegrationMappings(groupId: string, userId: string, userRole: Role) {
+    const group = await this.findOne(groupId, userId, userRole);
+    const repos = await this.groupRepoRepository.find({
+      where: { group_id: groupId },
+      order: { created_at: 'ASC' },
+    });
+
+    return {
+      group_id: group.id,
+      jira_project_key: group.jira_project_key,
+      github_repositories: repos.map((repo) => ({
+        id: repo.id,
+        repo_url: repo.repo_url,
+        repo_name: repo.repo_name,
+        repo_owner: repo.repo_owner,
+        is_primary: repo.is_primary,
+      })),
     };
   }
 

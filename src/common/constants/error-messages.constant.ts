@@ -27,6 +27,15 @@ export const ERROR_MESSAGES = {
       'You are the last leader. Assign another leader before leaving.',
     ONLY_LEADERS_CAN_MANAGE: 'Only group leaders can perform this action',
   },
+  TASKS: {
+    NOT_FOUND: 'Task not found',
+    GROUP_NOT_FOUND: 'Group not found',
+    FORBIDDEN_READ:
+      'You are not allowed to view tasks for a group you have not joined',
+    FORBIDDEN_WRITE: 'Only group leaders can manage internal tasks',
+    ASSIGNEE_NOT_IN_GROUP:
+      'Assigned user must be an active member of the same group',
+  },
   VALIDATION: {
     INVALID_EMAIL: 'Invalid email format',
     PASSWORD_TOO_SHORT: 'Password must be at least 6 characters',

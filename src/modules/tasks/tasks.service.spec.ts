@@ -1,0 +1,323 @@
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
+import { Test, TestingModule } from '@nestjs/testing';
+import { getRepositoryToken } from '@nestjs/typeorm';
+import {
+  MembershipRole,
+  Role,
+  TaskPriority,
+  TaskStatus,
+} from '../../common/enums';
+import { Group, GroupMembership, Task, User } from '../../entities';
+import { TasksService } from './tasks.service';
+
+function createMockRepository() {
+  const qb = {
+    innerJoin: jest.fn().mockReturnThis(),
+    leftJoin: jest.fn().mockReturnThis(),
+    leftJoinAndSelect: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    andWhere: jest.fn().mockReturnThis(),
+    select: jest.fn().mockReturnThis(),
+    orderBy: jest.fn().mockReturnThis(),
+    skip: jest.fn().mockReturnThis(),
+    take: jest.fn().mockReturnThis(),
+    getManyAndCount: jest.fn(),
+    getOne: jest.fn(),
+  };
+
+  return {
+    findOne: jest.fn(),
+    create: jest.fn((dto) => dto),
+    save: jest.fn(),
+    createQueryBuilder: jest.fn(() => qb),
+    _qb: qb,
+  };
+}
+
+describe('TasksService', () => {
+  let service: TasksService;
+  let taskRepo: ReturnType<typeof createMockRepository>;
+  let groupRepo: ReturnType<typeof createMockRepository>;
+  let membershipRepo: ReturnType<typeof createMockRepository>;
+  let userRepo: ReturnType<typeof createMockRepository>;
+
+  const groupId = '11111111-1111-1111-1111-111111111111';
+  const leaderId = '22222222-2222-2222-2222-222222222222';
+  const memberId = '33333333-3333-3333-3333-333333333333';
+  const outsiderId = '44444444-4444-4444-4444-444444444444';
+  const taskId = '55555555-5555-5555-5555-555555555555';
+
+  beforeEach(async () => {
+    taskRepo = createMockRepository();
+    groupRepo = createMockRepository();
+    membershipRepo = createMockRepository();
+    userRepo = createMockRepository();
+
+    taskRepo.save.mockImplementation(async (entity) => ({
+      id: entity.id ?? taskId,
+      created_at: entity.created_at ?? new Date('2026-03-20T10:00:00.000Z'),
+      updated_at: new Date('2026-03-20T10:00:00.000Z'),
+      ...entity,
+    }));
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        TasksService,
+        { provide: getRepositoryToken(Task), useValue: taskRepo },
+        { provide: getRepositoryToken(Group), useValue: groupRepo },
+        { provide: getRepositoryToken(GroupMembership), useValue: membershipRepo },
+        { provide: getRepositoryToken(User), useValue: userRepo },
+      ],
+    }).compile();
+
+    service = module.get<TasksService>(TasksService);
+  });
+
+  it('creates a task for a leader and returns mobile contract', async () => {
+    groupRepo.findOne.mockResolvedValue({ id: groupId });
+    membershipRepo.findOne
+      .mockResolvedValueOnce({
+        group_id: groupId,
+        user_id: leaderId,
+        role_in_group: MembershipRole.LEADER,
+        left_at: null,
+      })
+      .mockResolvedValueOnce({
+        group_id: groupId,
+        user_id: memberId,
+        role_in_group: MembershipRole.MEMBER,
+        left_at: null,
+      });
+    userRepo.findOne.mockResolvedValue({
+      id: memberId,
+      full_name: 'Member A',
+      email: 'member@fpt.edu.vn',
+    });
+    taskRepo._qb.getOne.mockResolvedValue({
+      id: taskId,
+      group_id: groupId,
+      title: 'Prepare mobile payload',
+      description: 'Return task DTO',
+      status: TaskStatus.TODO,
+      priority: TaskPriority.HIGH,
+      due_at: new Date('2026-03-25T10:00:00.000Z'),
+      created_at: new Date('2026-03-20T10:00:00.000Z'),
+      updated_at: new Date('2026-03-20T10:00:00.000Z'),
+      assignee: {
+        id: memberId,
+        full_name: 'Member A',
+        email: 'member@fpt.edu.vn',
+      },
+    });
+
+    const result = await service.create(leaderId, Role.STUDENT, {
+      group_id: groupId,
+      title: 'Prepare mobile payload',
+      description: 'Return task DTO',
+      assignee_id: memberId,
+      due_at: '2026-03-25T10:00:00.000Z',
+      priority: TaskPriority.HIGH,
+      status: TaskStatus.TODO,
+    });
+
+    expect(result).toMatchObject({
+      id: taskId,
+      group_id: groupId,
+      assignee_name: 'Member A',
+      priority: TaskPriority.HIGH,
+      status: TaskStatus.TODO,
+    });
+  });
+
+  it('rejects task creation for non-leader members', async () => {
+    groupRepo.findOne.mockResolvedValue({ id: groupId });
+    membershipRepo.findOne.mockResolvedValue({
+      group_id: groupId,
+      user_id: memberId,
+      role_in_group: MembershipRole.MEMBER,
+      left_at: null,
+    });
+
+    await expect(
+      service.create(memberId, Role.STUDENT, {
+        group_id: groupId,
+        title: 'No permission',
+      }),
+    ).rejects.toThrow(ForbiddenException);
+  });
+
+  it('rejects assignee outside the group', async () => {
+    groupRepo.findOne.mockResolvedValue({ id: groupId });
+    membershipRepo.findOne
+      .mockResolvedValueOnce({
+        group_id: groupId,
+        user_id: leaderId,
+        role_in_group: MembershipRole.LEADER,
+        left_at: null,
+      })
+      .mockResolvedValueOnce(null);
+
+    await expect(
+      service.create(leaderId, Role.STUDENT, {
+        group_id: groupId,
+        title: 'Bad assignee',
+        assignee_id: outsiderId,
+      }),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('updates a task after validating permission and assignee', async () => {
+    taskRepo.findOne.mockResolvedValue({
+      id: taskId,
+      group_id: groupId,
+      title: 'Old title',
+      description: null,
+      status: TaskStatus.TODO,
+      priority: TaskPriority.MEDIUM,
+      assignee_id: null,
+      due_at: null,
+      created_by_id: leaderId,
+      deleted_at: null,
+    });
+    membershipRepo.findOne
+      .mockResolvedValueOnce({
+        group_id: groupId,
+        user_id: leaderId,
+        role_in_group: MembershipRole.LEADER,
+        left_at: null,
+      })
+      .mockResolvedValueOnce({
+        group_id: groupId,
+        user_id: leaderId,
+        role_in_group: MembershipRole.LEADER,
+        left_at: null,
+      })
+      .mockResolvedValueOnce({
+        group_id: groupId,
+        user_id: memberId,
+        role_in_group: MembershipRole.MEMBER,
+        left_at: null,
+      });
+    userRepo.findOne.mockResolvedValue({
+      id: memberId,
+      full_name: 'Member A',
+      email: 'member@fpt.edu.vn',
+    });
+    taskRepo._qb.getOne.mockResolvedValue({
+      id: taskId,
+      group_id: groupId,
+      title: 'Updated title',
+      description: null,
+      status: TaskStatus.IN_PROGRESS,
+      priority: TaskPriority.URGENT,
+      due_at: null,
+      created_at: new Date('2026-03-20T10:00:00.000Z'),
+      updated_at: new Date('2026-03-20T11:00:00.000Z'),
+      assignee: {
+        id: memberId,
+        full_name: 'Member A',
+        email: 'member@fpt.edu.vn',
+      },
+    });
+
+    const result = await service.update(taskId, leaderId, Role.STUDENT, {
+      title: 'Updated title',
+      status: TaskStatus.IN_PROGRESS,
+      priority: TaskPriority.URGENT,
+      assignee_id: memberId,
+    });
+
+    expect(result.title).toBe('Updated title');
+    expect(result.status).toBe(TaskStatus.IN_PROGRESS);
+    expect(result.priority).toBe(TaskPriority.URGENT);
+  });
+
+  it('soft deletes a task', async () => {
+    taskRepo.findOne.mockResolvedValue({
+      id: taskId,
+      group_id: groupId,
+      deleted_at: null,
+    });
+    membershipRepo.findOne
+      .mockResolvedValueOnce({
+        group_id: groupId,
+        user_id: leaderId,
+        role_in_group: MembershipRole.LEADER,
+        left_at: null,
+      })
+      .mockResolvedValueOnce({
+        group_id: groupId,
+        user_id: leaderId,
+        role_in_group: MembershipRole.LEADER,
+        left_at: null,
+      });
+
+    await service.remove(taskId, leaderId, Role.STUDENT);
+
+    expect(taskRepo.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: taskId,
+        deleted_at: expect.any(Date),
+      }),
+    );
+  });
+
+  it('lists tasks with status/search filters and pagination meta', async () => {
+    groupRepo.findOne.mockResolvedValue({ id: groupId });
+    membershipRepo.findOne.mockResolvedValue({
+      group_id: groupId,
+      user_id: memberId,
+      role_in_group: MembershipRole.MEMBER,
+      left_at: null,
+    });
+    taskRepo._qb.getManyAndCount.mockResolvedValue([
+      [
+        {
+          id: taskId,
+          group_id: groupId,
+          title: 'Searchable task',
+          description: 'Contains API keyword',
+          status: TaskStatus.DONE,
+          priority: TaskPriority.MEDIUM,
+          assignee: { full_name: 'Member A', email: 'member@fpt.edu.vn' },
+          created_at: new Date('2026-03-20T10:00:00.000Z'),
+          updated_at: new Date('2026-03-20T11:00:00.000Z'),
+        },
+      ],
+      1,
+    ]);
+
+    const result = await service.findAll(memberId, {
+      group_id: groupId,
+      status: TaskStatus.DONE,
+      search: 'API',
+      page: 2,
+      limit: 5,
+    });
+
+    expect(taskRepo._qb.andWhere).toHaveBeenCalledWith('task.status = :status', {
+      status: TaskStatus.DONE,
+    });
+    expect(taskRepo._qb.skip).toHaveBeenCalledWith(5);
+    expect(taskRepo._qb.take).toHaveBeenCalledWith(5);
+    expect(result.meta).toEqual({
+      total: 1,
+      page: 2,
+      limit: 5,
+      total_pages: 1,
+    });
+    expect(result.data[0].title).toBe('Searchable task');
+  });
+
+  it('throws not found when requested group does not exist', async () => {
+    groupRepo.findOne.mockResolvedValue(null);
+
+    await expect(
+      service.findAll(memberId, { group_id: groupId }),
+    ).rejects.toThrow(NotFoundException);
+  });
+});

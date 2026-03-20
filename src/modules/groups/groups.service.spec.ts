@@ -72,6 +72,7 @@ const mockGroupWithMembers = {
 
 function createMockGroupRepository() {
   const qb = {
+    distinct: jest.fn().mockReturnThis(),
     leftJoinAndSelect: jest.fn().mockReturnThis(),
     where: jest.fn().mockReturnThis(),
     orderBy: jest.fn().mockReturnThis(),
@@ -295,6 +296,7 @@ describe('GroupsService', () => {
       const result = await service.findOne(GROUP_ID, USER_ID, Role.STUDENT);
 
       expect(result.id).toBe(GROUP_ID);
+      expect(result.jira_project_key).toBe('ECOM');
       expect(result.members).toHaveLength(1);
       expect(result.members_count).toBe(1);
     });
@@ -832,6 +834,31 @@ describe('GroupsService', () => {
       expect(result.warnings).toContain(
         'Jira account is not linked for the current user.',
       );
+    });
+  });
+
+  describe('getIntegrationMappings', () => {
+    it('should return jira key and linked repo mapping', async () => {
+      groupRepo._qb.getOne.mockResolvedValue(mockGroupWithMembers);
+      groupRepositoryRepo.find.mockResolvedValue([
+        {
+          id: 'repo-id',
+          repo_url: 'https://github.com/org/repo',
+          repo_name: 'repo',
+          repo_owner: 'org',
+          is_primary: true,
+        },
+      ]);
+
+      const result = await service.getIntegrationMappings(
+        GROUP_ID,
+        USER_ID,
+        Role.STUDENT,
+      );
+
+      expect(result.jira_project_key).toBe('ECOM');
+      expect(result.github_repositories).toHaveLength(1);
+      expect(result.github_repositories[0].repo_name).toBe('repo');
     });
   });
 });
