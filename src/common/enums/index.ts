@@ -6,3 +6,5 @@ export { IntegrationProvider } from './integration-provider.enum';
 export { MembershipRole } from './membership-role.enum';
 export { Role } from './role.enum';
 export { SemesterStatus } from './semester-status.enum';
+export { TaskPriority } from './task-priority.enum';
+export { TaskStatus } from './task-status.enum';

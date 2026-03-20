@@ -1,5 +1,5 @@
 import { HttpService } from '@nestjs/axios';
-import { Injectable, HttpStatus } from '@nestjs/common';
+import { Injectable, HttpStatus, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { lastValueFrom } from 'rxjs';
 import { Repository } from 'typeorm';
@@ -28,6 +28,8 @@ export interface JiraProject {
 
 @Injectable()
 export class JiraService {
+  private readonly logger = new Logger(JiraService.name);
+
   constructor(
     @InjectRepository(IntegrationToken)
     private readonly integrationTokenRepository: Repository<IntegrationToken>,
@@ -61,6 +63,13 @@ export class JiraService {
     const status = error?.response?.status;
 
     if (status === 401) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'jira_token_invalid',
+          user_id: userId,
+          hint: 'relink_jira_account',
+        }),
+      );
       await this.integrationTokenRepository.delete({
         user_id: userId,
         provider: IntegrationProvider.JIRA,
@@ -75,6 +84,13 @@ export class JiraService {
     }
 
     if (status === 403) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'jira_scope_invalid',
+          user_id: userId,
+          hint: 'relink_jira_account_with_required_scopes',
+        }),
+      );
       throw createIntegrationException(HttpStatus.FORBIDDEN, {
         code: 'INSUFFICIENT_SCOPE',
         provider: IntegrationProvider.JIRA,

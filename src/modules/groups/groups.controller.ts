@@ -116,6 +116,22 @@ export class GroupsController {
     );
   }
 
+  @Get(':id/integrations')
+  @ApiOperation({
+    summary: 'Get current integration mappings for the group',
+  })
+  @ApiParam({ name: 'id', description: 'Group UUID' })
+  async getIntegrationMappings(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: AuthorizedRequest,
+  ) {
+    return this.groupsService.getIntegrationMappings(
+      id,
+      req.user.id,
+      req.user.role as Role,
+    );
+  }
+
   @Patch(':id')
   @ApiOperation({ summary: 'Update group info (leader or admin only)' })
   @ApiParam({ name: 'id', description: 'Group UUID' })

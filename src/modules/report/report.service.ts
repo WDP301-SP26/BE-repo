@@ -2,6 +2,7 @@ import {
   BadRequestException,
   HttpException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -15,6 +16,7 @@ import { JiraService } from '../jira/jira.service';
 
 @Injectable()
 export class ReportService {
+  private readonly logger = new Logger(ReportService.name);
   private groq: Groq;
 
   constructor(
@@ -83,13 +85,6 @@ export class ReportService {
       ? leader.user_id || leader.user?.id
       : group.created_by_id;
 
-    console.log(
-      '[DEBUG generateSrs] Group Leader ID:',
-      leader?.user_id,
-      'Token User ID:',
-      jiraTokenUserId,
-    );
-
     // 1. Fetch raw data from Jira
     const rawJiraData = await this.jiraService.getProjectIssues(
       jiraTokenUserId,
@@ -133,6 +128,13 @@ Return only the markdown document. Do not add conversational text around it.`;
     if (!group) throw new NotFoundException('Group not found');
 
     if (!group.jira_project_key) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'assignments_report_unlinked_jira',
+          group_id: groupId,
+          hint: 'link_jira_project_before_fetching_assignments',
+        }),
+      );
       return {
         groupName: group.name,
         totalTasks: 0,
@@ -150,13 +152,6 @@ Return only the markdown document. Do not add conversational text around it.`;
       ? leader.user_id || leader.user?.id
       : group.created_by_id;
 
-    console.log(
-      '[DEBUG generateAssignmentReport] Group Leader ID:',
-      leader?.user_id,
-      'Token User ID:',
-      jiraTokenUserId,
-    );
-
     let rawJiraData: any[] = [];
     const warnings: string[] = [];
 
@@ -166,6 +161,17 @@ Return only the markdown document. Do not add conversational text around it.`;
         group.jira_project_key,
       );
     } catch (error) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'assignments_report_jira_fetch_failed',
+          group_id: groupId,
+          hint: 'relink_jira_if_token_is_expired',
+          message: this.extractErrorMessage(
+            error,
+            'Failed to fetch Jira assignment data for this group.',
+          ),
+        }),
+      );
       warnings.push(
         this.extractErrorMessage(
           error,

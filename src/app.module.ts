@@ -15,6 +15,7 @@ import { MailModule } from './modules/mail/mail.module';
 import { NotificationModule } from './modules/notification/notification.module';
 import { ReportModule } from './modules/report/report.module';
 import { SemesterModule } from './modules/semester/semester.module';
+import { TasksModule } from './modules/tasks/tasks.module';
 import { TopicModule } from './modules/topic/topic.module';
 import { UsersModule } from './modules/users/users.module';
 @Module({
@@ -57,6 +58,7 @@ import { UsersModule } from './modules/users/users.module';
     ReportModule,
     MailModule,
     SemesterModule,
+    TasksModule,
   ],
   controllers: [AppController, HealthController],
   providers: [AppService],
