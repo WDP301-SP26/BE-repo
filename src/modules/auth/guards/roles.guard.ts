@@ -1,11 +1,22 @@
-import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
+import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import type { Request } from 'express';
 import { Role } from '../../../entities';
 import { ROLES_KEY } from '../decorators/roles.decorator';
+
+interface RolesRequest extends Request {
+  user?: {
+    role?: string;
+  };
+}
 
 @Injectable()
 export class RolesGuard implements CanActivate {
   constructor(private reflector: Reflector) {}
+
+  private isRole(value: string | undefined): value is Role {
+    return !!value && Object.values(Role).includes(value as Role);
+  }
 
   canActivate(context: ExecutionContext): boolean {
     const requiredRoles = this.reflector.getAllAndOverride<Role[]>(ROLES_KEY, [
@@ -17,7 +28,13 @@ export class RolesGuard implements CanActivate {
       return true;
     }
 
-    const { user } = context.switchToHttp().getRequest();
-    return requiredRoles.includes(user.role);
+    const request = context.switchToHttp().getRequest<RolesRequest>();
+    const userRole = request.user?.role;
+
+    if (!this.isRole(userRole)) {
+      return false;
+    }
+
+    return requiredRoles.includes(userRole);
   }
 }
