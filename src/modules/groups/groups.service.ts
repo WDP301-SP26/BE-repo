@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Brackets, IsNull, Repository } from 'typeorm';
+import { Brackets, In, IsNull, Repository } from 'typeorm';
 import { ERROR_MESSAGES } from '../../common/constants';
 import {
   Group,
@@ -118,6 +118,29 @@ export class GroupsService {
     qb.orderBy('group.created_at', 'DESC').skip(skip).take(limit);
 
     const [groups, total] = await qb.getManyAndCount();
+    const groupIds = groups.map((group) => group.id);
+
+    const memberships =
+      groupIds.length > 0
+        ? await this.membershipRepository.find({
+            where: {
+              group_id: In(groupIds),
+              user_id: userId,
+              left_at: IsNull(),
+            },
+            select: {
+              group_id: true,
+              role_in_group: true,
+            },
+          })
+        : [];
+
+    const roleByGroupId = new Map(
+      memberships.map((membership) => [
+        membership.group_id,
+        membership.role_in_group,
+      ]),
+    );
 
     return {
       data: groups.map((group: any) => ({
@@ -130,6 +153,7 @@ export class GroupsService {
         github_repo_url: group.github_repo_url,
         jira_project_key: group.jira_project_key,
         members_count: group.members_count ?? 0,
+        my_role_in_group: roleByGroupId.get(group.id) || null,
         created_by_id: group.created_by_id,
         created_at: group.created_at,
         updated_at: group.updated_at,
@@ -252,7 +276,10 @@ export class GroupsService {
     let newGithubUrl = dto.github_repo_url;
     let newJiraKey = dto.jira_project_key;
 
-    if (dto.jira_project_key && dto.jira_project_key !== group.jira_project_key) {
+    if (
+      dto.jira_project_key &&
+      dto.jira_project_key !== group.jira_project_key
+    ) {
       const jiraProject = await this.jiraService.validateProjectAccess(
         userId,
         dto.jira_project_key,
@@ -746,7 +773,11 @@ export class GroupsService {
     };
   }
 
-  async getIntegrationMappings(groupId: string, userId: string, userRole: Role) {
+  async getIntegrationMappings(
+    groupId: string,
+    userId: string,
+    userRole: Role,
+  ) {
     const group = await this.findOne(groupId, userId, userRole);
     const repos = await this.groupRepoRepository.find({
       where: { group_id: groupId },

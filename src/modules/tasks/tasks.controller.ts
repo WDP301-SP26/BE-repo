@@ -14,8 +14,8 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import {
-  ApiBody,
   ApiBearerAuth,
+  ApiBody,
   ApiExtraModels,
   ApiOperation,
   ApiParam,
@@ -29,8 +29,11 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { QueryTasksDto } from './dto/query-tasks.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
+import {
+  PaginatedTasksEntity,
+  TaskResponseEntity,
+} from './entities/task-response.entity';
 import { TaskWriteRateLimitGuard } from './guards/task-write-rate-limit.guard';
-import { PaginatedTasksEntity, TaskResponseEntity } from './entities/task-response.entity';
 import { TasksService } from './tasks.service';
 
 @ApiTags('Tasks')
@@ -43,11 +46,23 @@ export class TasksController {
 
   @Get()
   @ApiOperation({
-    summary: 'List internal tasks for groups the caller has joined',
+    summary: '[Step 5] List internal tasks for joined groups',
   })
-  @ApiQuery({ name: 'group_id', required: false, example: '11111111-1111-1111-1111-111111111111' })
-  @ApiQuery({ name: 'status', required: false, enum: ['TODO', 'IN_PROGRESS', 'DONE', 'BLOCKED'] })
-  @ApiQuery({ name: 'assignee_id', required: false, example: '22222222-2222-2222-2222-222222222222' })
+  @ApiQuery({
+    name: 'group_id',
+    required: false,
+    example: '11111111-1111-1111-1111-111111111111',
+  })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    enum: ['TODO', 'IN_PROGRESS', 'DONE', 'BLOCKED'],
+  })
+  @ApiQuery({
+    name: 'assignee_id',
+    required: false,
+    example: '22222222-2222-2222-2222-222222222222',
+  })
   @ApiQuery({ name: 'search', required: false, example: 'mobile' })
   @ApiQuery({ name: 'page', required: false, example: 1 })
   @ApiQuery({ name: 'limit', required: false, example: 20 })
@@ -58,7 +73,10 @@ export class TasksController {
 
   @Post()
   @UseGuards(TaskWriteRateLimitGuard)
-  @ApiOperation({ summary: 'Create internal task for a group' })
+  @ApiOperation({
+    summary:
+      '[Step 6] Create task (LEADER/ADMIN) and sync to Jira when group has jira_project_key',
+  })
   @ApiBody({
     type: CreateTaskDto,
     examples: {
@@ -86,7 +104,10 @@ export class TasksController {
 
   @Patch(':id')
   @UseGuards(TaskWriteRateLimitGuard)
-  @ApiOperation({ summary: 'Update internal task' })
+  @ApiOperation({
+    summary:
+      '[Step 7] Update task status/assignee (LEADER/ADMIN); Jira status follows TODO -> IN_PROGRESS -> DONE',
+  })
   @ApiParam({ name: 'id', description: 'Task UUID' })
   @ApiBody({
     type: UpdateTaskDto,
@@ -110,7 +131,12 @@ export class TasksController {
     @Req() req: AuthorizedRequest,
     @Body() dto: UpdateTaskDto,
   ) {
-    return this.tasksService.update(id, req.user.id, req.user.role as Role, dto);
+    return this.tasksService.update(
+      id,
+      req.user.id,
+      req.user.role as Role,
+      dto,
+    );
   }
 
   @Delete(':id')

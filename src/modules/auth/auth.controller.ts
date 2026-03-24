@@ -278,7 +278,7 @@ export class AuthController {
     const clientId = this.configService.get<string>('JIRA_CLIENT_ID');
     const callbackUrl = this.configService.get<string>('JIRA_CALLBACK_URL', '');
     const scope =
-      'read:jira-work read:jira-user read:me read:account offline_access';
+      'read:jira-work write:jira-work read:jira-user read:me read:account offline_access';
 
     const jiraAuthUrl = `https://auth.atlassian.com/authorize?audience=api.atlassian.com&client_id=${clientId}&scope=${encodeURIComponent(scope)}&redirect_uri=${encodeURIComponent(callbackUrl)}&state=${state}&response_type=code&prompt=consent`;
 
