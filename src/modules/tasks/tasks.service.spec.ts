@@ -12,6 +12,8 @@ import {
   TaskStatus,
 } from '../../common/enums';
 import { Group, GroupMembership, Task, User } from '../../entities';
+import { IntegrationToken } from '../../entities/integration-token.entity';
+import { JiraService } from '../jira/jira.service';
 import { TasksService } from './tasks.service';
 
 function createMockRepository() {
@@ -44,6 +46,12 @@ describe('TasksService', () => {
   let groupRepo: ReturnType<typeof createMockRepository>;
   let membershipRepo: ReturnType<typeof createMockRepository>;
   let userRepo: ReturnType<typeof createMockRepository>;
+  let integrationTokenRepo: ReturnType<typeof createMockRepository>;
+  const jiraService = {
+    createIssue: jest.fn(),
+    assignIssue: jest.fn(),
+    transitionIssue: jest.fn(),
+  };
 
   const groupId = '11111111-1111-1111-1111-111111111111';
   const leaderId = '22222222-2222-2222-2222-222222222222';
@@ -56,6 +64,7 @@ describe('TasksService', () => {
     groupRepo = createMockRepository();
     membershipRepo = createMockRepository();
     userRepo = createMockRepository();
+    integrationTokenRepo = createMockRepository();
 
     taskRepo.save.mockImplementation(async (entity) => ({
       id: entity.id ?? taskId,
@@ -69,8 +78,16 @@ describe('TasksService', () => {
         TasksService,
         { provide: getRepositoryToken(Task), useValue: taskRepo },
         { provide: getRepositoryToken(Group), useValue: groupRepo },
-        { provide: getRepositoryToken(GroupMembership), useValue: membershipRepo },
+        {
+          provide: getRepositoryToken(GroupMembership),
+          useValue: membershipRepo,
+        },
         { provide: getRepositoryToken(User), useValue: userRepo },
+        {
+          provide: getRepositoryToken(IntegrationToken),
+          useValue: integrationTokenRepo,
+        },
+        { provide: JiraService, useValue: jiraService },
       ],
     }).compile();
 
@@ -171,6 +188,10 @@ describe('TasksService', () => {
   });
 
   it('updates a task after validating permission and assignee', async () => {
+    groupRepo.findOne.mockResolvedValue({
+      id: groupId,
+      jira_project_key: null,
+    });
     taskRepo.findOne.mockResolvedValue({
       id: taskId,
       group_id: groupId,
@@ -299,9 +320,12 @@ describe('TasksService', () => {
       limit: 5,
     });
 
-    expect(taskRepo._qb.andWhere).toHaveBeenCalledWith('task.status = :status', {
-      status: TaskStatus.DONE,
-    });
+    expect(taskRepo._qb.andWhere).toHaveBeenCalledWith(
+      'task.status = :status',
+      {
+        status: TaskStatus.DONE,
+      },
+    );
     expect(taskRepo._qb.skip).toHaveBeenCalledWith(5);
     expect(taskRepo._qb.take).toHaveBeenCalledWith(5);
     expect(result.meta).toEqual({

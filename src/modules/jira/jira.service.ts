@@ -47,6 +47,24 @@ interface JiraIssueSearchResponse {
   issues?: JiraIssueSearchItem[];
 }
 
+interface JiraCreateIssuePayload {
+  projectKey: string;
+  summary: string;
+  description?: string | null;
+}
+
+interface JiraCreateIssueResponse {
+  id: string;
+  key: string;
+}
+
+interface JiraTransitionsResponse {
+  transitions?: Array<{
+    id: string;
+    name: string;
+  }>;
+}
+
 interface JiraCreatedProjectResponse extends Record<string, unknown> {
   id?: string | number;
   projectKey?: string;
@@ -66,6 +84,11 @@ export interface JiraProject {
     '16x16': string;
     '32x32': string;
   };
+}
+
+export interface JiraIssueLink {
+  id: string;
+  key: string;
 }
 
 @Injectable()
@@ -607,6 +630,157 @@ export class JiraService {
         );
 
         return response.data;
+      },
+    );
+  }
+
+  async createIssue(
+    userId: string,
+    payload: JiraCreateIssuePayload,
+  ): Promise<JiraIssueLink> {
+    return this.executeWithJiraContext(
+      userId,
+      'Failed to create Jira issue.',
+      async ({ accessToken, cloudId }) => {
+        const fields: Record<string, unknown> = {
+          project: { key: payload.projectKey },
+          summary: payload.summary,
+          issuetype: { name: 'Task' },
+        };
+
+        if (payload.description?.trim()) {
+          fields.description = {
+            type: 'doc',
+            version: 1,
+            content: [
+              {
+                type: 'paragraph',
+                content: [
+                  {
+                    type: 'text',
+                    text: payload.description,
+                  },
+                ],
+              },
+            ],
+          };
+        }
+
+        const response = await lastValueFrom(
+          this.httpService.post<JiraCreateIssueResponse>(
+            `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/issue`,
+            { fields },
+            {
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+              },
+            },
+          ),
+        );
+
+        return {
+          id: response.data.id,
+          key: response.data.key,
+        };
+      },
+    );
+  }
+
+  async assignIssue(
+    userId: string,
+    issueKey: string,
+    jiraAccountId: string,
+  ): Promise<void> {
+    await this.executeWithJiraContext(
+      userId,
+      `Failed to assign Jira issue ${issueKey}.`,
+      async ({ accessToken, cloudId }) => {
+        await lastValueFrom(
+          this.httpService.put(
+            `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/issue/${encodeURIComponent(issueKey)}/assignee`,
+            {
+              accountId: jiraAccountId,
+            },
+            {
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+              },
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  async transitionIssue(
+    userId: string,
+    issueKey: string,
+    targetStatus: 'TODO' | 'IN_PROGRESS' | 'DONE' | 'BLOCKED',
+  ): Promise<boolean> {
+    return this.executeWithJiraContext(
+      userId,
+      `Failed to transition Jira issue ${issueKey}.`,
+      async ({ accessToken, cloudId }) => {
+        const transitionsResponse = await lastValueFrom(
+          this.httpService.get<JiraTransitionsResponse>(
+            `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/issue/${encodeURIComponent(issueKey)}/transitions`,
+            {
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                Accept: 'application/json',
+              },
+            },
+          ),
+        );
+
+        const transitions = transitionsResponse.data.transitions || [];
+        const targetNames =
+          targetStatus === 'TODO'
+            ? ['to do', 'todo', 'open', 'selected for development']
+            : targetStatus === 'IN_PROGRESS'
+              ? ['in progress', 'doing', 'started']
+              : targetStatus === 'DONE'
+                ? ['done', 'resolved', 'closed']
+                : ['blocked'];
+
+        const matched = transitions.find((transition) =>
+          targetNames.includes(transition.name.trim().toLowerCase()),
+        );
+
+        if (!matched) {
+          this.logger.warn(
+            JSON.stringify({
+              event: 'jira_transition_missing',
+              user_id: userId,
+              issue_key: issueKey,
+              target_status: targetStatus,
+              available_transitions: transitions.map((item) => item.name),
+            }),
+          );
+          return false;
+        }
+
+        await lastValueFrom(
+          this.httpService.post(
+            `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/issue/${encodeURIComponent(issueKey)}/transitions`,
+            {
+              transition: { id: matched.id },
+            },
+            {
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+              },
+            },
+          ),
+        );
+
+        return true;
       },
     );
   }
