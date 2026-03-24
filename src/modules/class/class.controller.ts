@@ -4,12 +4,12 @@ import {
   Controller,
   Get,
   Param,
+  ParseUUIDPipe,
   Post,
   Req,
   UploadedFile,
   UseGuards,
   UseInterceptors,
-  ParseUUIDPipe,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
@@ -53,13 +53,19 @@ export class ClassController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'Get all classes' })
+  @ApiOperation({
+    summary: 'Get all classes (discovery)',
+  })
   async getClasses(@Req() req: AuthorizedRequest) {
     return this.classService.getAllClasses(req.user.id, req.user.role);
   }
 
   @Get('my-classes')
-  @ApiOperation({ summary: 'Get classes enrolled by the current user' })
+  @ApiOperation({
+    summary: '[Step 0] Get classes enrolled by current user',
+    description:
+      'Student quick path: call this first, then use classId with GET /groups/class/:classId.',
+  })
   async getMyClasses(@Req() req: AuthorizedRequest) {
     return this.classService.myClasses(req.user.id);
   }

@@ -50,6 +50,14 @@ export class GroupEntity {
   @ApiProperty({ example: 5 })
   members_count: number;
 
+  @ApiPropertyOptional({
+    example: 'LEADER',
+    enum: ['MEMBER', 'LEADER', 'MENTOR'],
+    description:
+      'Role of the current authenticated user in this group. Null if user is not a member.',
+  })
+  my_role_in_group?: string | null;
+
   @ApiProperty({ example: '550e8400-e29b-41d4-a716-446655440000' })
   created_by_id: string;
 

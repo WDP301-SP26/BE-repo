@@ -15,6 +15,7 @@ import {
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiExcludeEndpoint,
   ApiOperation,
   ApiParam,
   ApiResponse,
@@ -55,7 +56,9 @@ export class GroupsController {
 
   @Get()
   @ApiOperation({
-    summary: 'List groups (students see own, lecturers/admins see all)',
+    summary: '[Step 1] Get my joined groups and my role in each group',
+    description:
+      'For STUDENT/GROUP_LEADER: returns only groups you joined. Use my_role_in_group=LEADER to know whether you can create/update/delete tasks.',
   })
   @ApiResponse({ status: 200, type: PaginatedGroupsEntity })
   async findAll(@Req() req: AuthorizedRequest, @Query() query: QueryGroupsDto) {
@@ -67,7 +70,11 @@ export class GroupsController {
   }
 
   @Get('class/:classId')
-  @ApiOperation({ summary: 'Get all groups for a specific class' })
+  @ApiOperation({
+    summary: '[Step 2] Get available groups in a class before joining one',
+    description:
+      'Use this when you already know classId and need to choose a group to join.',
+  })
   async getGroupsByClass(
     @Req() req: AuthorizedRequest,
     @Param('classId') classId: string,
@@ -81,7 +88,7 @@ export class GroupsController {
 
   @Post(':id/join')
   @ApiOperation({
-    summary: 'Join an empty group (first to join becomes LEADER)',
+    summary: '[Step 3] Join group (first member becomes LEADER)',
   })
   async joinEmptyGroup(
     @Req() req: AuthorizedRequest,
@@ -96,13 +103,17 @@ export class GroupsController {
   @ApiResponse({ status: 200, type: GroupDetailEntity })
   @ApiResponse({ status: 403, description: 'Not a member of this group' })
   @ApiResponse({ status: 404, description: 'Group not found' })
-  async findOne(@Param('id', ParseUUIDPipe) id: string, @Req() req: AuthorizedRequest) {
+  async findOne(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: AuthorizedRequest,
+  ) {
     return this.groupsService.findOne(id, req.user.id, req.user.role as Role);
   }
 
   @Get(':id/integration-status')
   @ApiOperation({
-    summary: 'Get integration readiness for the current user and group',
+    summary:
+      '[Step 4] Verify Jira/GitHub readiness before creating Jira-linked tasks',
   })
   @ApiParam({ name: 'id', description: 'Group UUID' })
   async getIntegrationStatus(
@@ -118,7 +129,7 @@ export class GroupsController {
 
   @Get(':id/integrations')
   @ApiOperation({
-    summary: 'Get current integration mappings for the group',
+    summary: 'Get integration mappings for the group',
   })
   @ApiParam({ name: 'id', description: 'Group UUID' })
   async getIntegrationMappings(
@@ -206,7 +217,10 @@ export class GroupsController {
   @ApiResponse({ status: 204, description: 'Left the group' })
   @ApiResponse({ status: 400, description: 'Cannot leave as last leader' })
   @ApiResponse({ status: 404, description: 'Not a member of this group' })
-  async leaveGroup(@Param('id', ParseUUIDPipe) id: string, @Req() req: AuthorizedRequest) {
+  async leaveGroup(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: AuthorizedRequest,
+  ) {
     return this.groupsService.leaveGroup(id, req.user.id);
   }
 
@@ -263,6 +277,7 @@ export class GroupsController {
   // ── Repository management ──────────────────────────────
 
   @Get(':id/repos')
+  @ApiExcludeEndpoint()
   @ApiOperation({ summary: 'List all repositories linked to a group' })
   @ApiParam({ name: 'id', description: 'Group UUID' })
   async getGroupRepos(@Param('id', ParseUUIDPipe) id: string) {
@@ -270,6 +285,7 @@ export class GroupsController {
   }
 
   @Post(':id/repos')
+  @ApiExcludeEndpoint()
   @ApiOperation({ summary: 'Link a repository to a group (leader only)' })
   @ApiParam({ name: 'id', description: 'Group UUID' })
   async addGroupRepo(
@@ -286,6 +302,7 @@ export class GroupsController {
   }
 
   @Delete(':id/repos/:repoId')
+  @ApiExcludeEndpoint()
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Remove a repository from a group (leader only)' })
   @ApiParam({ name: 'id', description: 'Group UUID' })
@@ -304,6 +321,7 @@ export class GroupsController {
   }
 
   @Get(':id/repos/:repoId/commits')
+  @ApiExcludeEndpoint()
   @Roles(Role.LECTURER, Role.STUDENT)
   @ApiOperation({ summary: 'Get recent commits for a linked group repository' })
   @ApiParam({ name: 'id', description: 'Group ID' })
