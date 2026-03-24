@@ -48,6 +48,12 @@ export class Task {
   @Column({ type: 'uuid', nullable: true })
   assignee_id: string | null;
 
+  @Column({ type: 'varchar', length: 50, nullable: true })
+  jira_issue_key: string | null;
+
+  @Column({ type: 'varchar', length: 50, nullable: true })
+  jira_issue_id: string | null;
+
   @Column({ type: 'timestamptz', nullable: true })
   due_at: Date | null;
 

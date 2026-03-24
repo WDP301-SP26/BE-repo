@@ -8,8 +8,21 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, IsNull, Repository } from 'typeorm';
 import { ERROR_MESSAGES } from '../../common/constants';
-import { MembershipRole, Role, TaskPriority, TaskStatus } from '../../common/enums';
-import { Group, GroupMembership, Task, User } from '../../entities';
+import {
+  IntegrationProvider,
+  MembershipRole,
+  Role,
+  TaskPriority,
+  TaskStatus,
+} from '../../common/enums';
+import {
+  Group,
+  GroupMembership,
+  IntegrationToken,
+  Task,
+  User,
+} from '../../entities';
+import { JiraService } from '../jira/jira.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { QueryTasksDto } from './dto/query-tasks.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
@@ -27,11 +40,20 @@ export class TasksService {
     private readonly membershipRepository: Repository<GroupMembership>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    @InjectRepository(IntegrationToken)
+    private readonly integrationTokenRepository: Repository<IntegrationToken>,
+    private readonly jiraService: JiraService,
   ) {}
 
   async findAll(userId: string, query: QueryTasksDto) {
-    const { group_id, status, assignee_id, search, page = 1, limit = 20 } =
-      query;
+    const {
+      group_id,
+      status,
+      assignee_id,
+      search,
+      page = 1,
+      limit = 20,
+    } = query;
 
     if (group_id) {
       await this.assertGroupExists(group_id);
@@ -57,7 +79,9 @@ export class TasksService {
       qb.andWhere('task.status = :status', { status });
     }
     if (assignee_id) {
-      qb.andWhere('task.assignee_id = :assigneeId', { assigneeId: assignee_id });
+      qb.andWhere('task.assignee_id = :assigneeId', {
+        assigneeId: assignee_id,
+      });
     }
     if (search) {
       qb.andWhere(
@@ -66,28 +90,32 @@ export class TasksService {
             .where('LOWER(task.title) LIKE LOWER(:search)', {
               search: `%${search}%`,
             })
-            .orWhere('LOWER(COALESCE(task.description, \'\')) LIKE LOWER(:search)', {
-              search: `%${search}%`,
-            });
+            .orWhere(
+              "LOWER(COALESCE(task.description, '')) LIKE LOWER(:search)",
+              {
+                search: `%${search}%`,
+              },
+            );
         }),
       );
     }
 
-    qb
-      .select([
-        'task.id',
-        'task.group_id',
-        'task.title',
-        'task.description',
-        'task.status',
-        'task.priority',
-        'task.due_at',
-        'task.created_at',
-        'task.updated_at',
-        'assignee.id',
-        'assignee.full_name',
-        'assignee.email',
-      ])
+    qb.select([
+      'task.id',
+      'task.group_id',
+      'task.title',
+      'task.description',
+      'task.status',
+      'task.priority',
+      'task.due_at',
+      'task.jira_issue_key',
+      'task.jira_issue_id',
+      'task.created_at',
+      'task.updated_at',
+      'assignee.id',
+      'assignee.full_name',
+      'assignee.email',
+    ])
       .orderBy('task.updated_at', 'DESC')
       .skip((page - 1) * limit)
       .take(limit);
@@ -106,15 +134,20 @@ export class TasksService {
   }
 
   async create(userId: string, userRole: Role, dto: CreateTaskDto) {
-    await this.assertGroupExists(dto.group_id);
+    const group = await this.assertGroupExists(dto.group_id);
     await this.assertCanManageGroup(dto.group_id, userId, userRole);
     await this.assertAssigneeInGroup(dto.group_id, dto.assignee_id);
+
+    const status = this.normalizeStatus(
+      dto.status || TaskStatus.TODO,
+      dto.assignee_id || null,
+    );
 
     const task = this.taskRepository.create({
       group_id: dto.group_id,
       title: dto.title.trim(),
       description: dto.description?.trim() || null,
-      status: dto.status || TaskStatus.TODO,
+      status,
       priority: dto.priority || TaskPriority.MEDIUM,
       assignee_id: dto.assignee_id || null,
       due_at: dto.due_at ? new Date(dto.due_at) : null,
@@ -122,11 +155,17 @@ export class TasksService {
     });
 
     const savedTask = await this.taskRepository.save(task);
+    await this.syncTaskToJira(userId, group, savedTask);
     this.logTaskAction('create', userId, dto.group_id, savedTask.id);
     return this.getTaskForViewer(savedTask.id, userId);
   }
 
-  async update(taskId: string, userId: string, userRole: Role, dto: UpdateTaskDto) {
+  async update(
+    taskId: string,
+    userId: string,
+    userRole: Role,
+    dto: UpdateTaskDto,
+  ) {
     const task = await this.getTaskOrThrow(taskId);
     await this.assertCanViewGroup(task.group_id, userId);
     await this.assertCanManageGroup(task.group_id, userId, userRole);
@@ -142,15 +181,31 @@ export class TasksService {
     Object.assign(task, {
       title: dto.title !== undefined ? dto.title.trim() : task.title,
       description:
-        dto.description !== undefined ? dto.description?.trim() || null : task.description,
-      status: dto.status ?? task.status,
+        dto.description !== undefined
+          ? dto.description?.trim() || null
+          : task.description,
+      status: this.normalizeStatus(
+        dto.status ?? task.status,
+        dto.assignee_id !== undefined
+          ? dto.assignee_id || null
+          : task.assignee_id,
+      ),
       priority: dto.priority ?? task.priority,
       assignee_id:
-        dto.assignee_id !== undefined ? dto.assignee_id || null : task.assignee_id,
-      due_at: dto.due_at !== undefined ? (dto.due_at ? new Date(dto.due_at) : null) : task.due_at,
+        dto.assignee_id !== undefined
+          ? dto.assignee_id || null
+          : task.assignee_id,
+      due_at:
+        dto.due_at !== undefined
+          ? dto.due_at
+            ? new Date(dto.due_at)
+            : null
+          : task.due_at,
     });
 
-    await this.taskRepository.save(task);
+    const updatedTask = await this.taskRepository.save(task);
+    const group = await this.assertGroupExists(task.group_id);
+    await this.syncTaskToJira(userId, group, updatedTask);
     this.logTaskAction('update', userId, task.group_id, task.id);
     return this.getTaskForViewer(task.id, userId);
   }
@@ -190,7 +245,7 @@ export class TasksService {
   private toTaskResponse(task: Task) {
     return {
       id: task.id,
-      key: null,
+      key: task.jira_issue_key || null,
       group_id: task.group_id,
       title: task.title,
       description: task.description,
@@ -214,11 +269,98 @@ export class TasksService {
   }
 
   private async assertGroupExists(groupId: string) {
-    const group = await this.groupRepository.findOne({ where: { id: groupId } });
+    const group = await this.groupRepository.findOne({
+      where: { id: groupId },
+    });
     if (!group) {
       throw new NotFoundException(ERROR_MESSAGES.TASKS.GROUP_NOT_FOUND);
     }
     return group;
+  }
+
+  private normalizeStatus(status: TaskStatus, assigneeId: string | null) {
+    if (status === TaskStatus.DONE || status === TaskStatus.BLOCKED) {
+      return status;
+    }
+
+    if (assigneeId) {
+      return TaskStatus.IN_PROGRESS;
+    }
+
+    return TaskStatus.TODO;
+  }
+
+  private async getJiraAccountIdByUserId(userId?: string | null) {
+    if (!userId) {
+      return null;
+    }
+
+    const jiraToken = await this.integrationTokenRepository.findOne({
+      where: { user_id: userId, provider: IntegrationProvider.JIRA },
+      select: { provider_user_id: true },
+    });
+
+    return jiraToken?.provider_user_id || null;
+  }
+
+  private async syncTaskToJira(userId: string, group: Group, task: Task) {
+    if (!group.jira_project_key) {
+      return;
+    }
+
+    try {
+      let issueKey = task.jira_issue_key || null;
+      let issueId = task.jira_issue_id || null;
+
+      if (!issueKey) {
+        const createdIssue = await this.jiraService.createIssue(userId, {
+          projectKey: group.jira_project_key,
+          summary: task.title,
+          description: task.description,
+        });
+        issueKey = createdIssue.key;
+        issueId = createdIssue.id;
+      }
+
+      if (issueKey) {
+        const jiraAssigneeAccountId = await this.getJiraAccountIdByUserId(
+          task.assignee_id,
+        );
+
+        if (jiraAssigneeAccountId) {
+          await this.jiraService.assignIssue(
+            userId,
+            issueKey,
+            jiraAssigneeAccountId,
+          );
+        }
+
+        await this.jiraService.transitionIssue(userId, issueKey, task.status);
+      }
+
+      if (issueKey !== task.jira_issue_key || issueId !== task.jira_issue_id) {
+        await this.taskRepository.update(
+          { id: task.id },
+          {
+            jira_issue_key: issueKey,
+            jira_issue_id: issueId,
+          },
+        );
+      }
+    } catch (error: unknown) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'task_jira_sync_failed',
+          group_id: group.id,
+          task_id: task.id,
+          jira_project_key: group.jira_project_key,
+          reason:
+            error instanceof Error
+              ? error.message
+              : 'Failed to sync internal task to Jira',
+        }),
+      );
+    }
   }
 
   private async assertCanViewGroup(groupId: string, userId: string) {
@@ -233,7 +375,11 @@ export class TasksService {
     return membership;
   }
 
-  private async assertCanManageGroup(groupId: string, userId: string, userRole: Role) {
+  private async assertCanManageGroup(
+    groupId: string,
+    userId: string,
+    userRole: Role,
+  ) {
     if (userRole === Role.ADMIN) {
       return;
     }
@@ -247,7 +393,10 @@ export class TasksService {
     }
   }
 
-  private async assertAssigneeInGroup(groupId: string, assigneeId?: string | null) {
+  private async assertAssigneeInGroup(
+    groupId: string,
+    assigneeId?: string | null,
+  ) {
     if (!assigneeId) {
       return;
     }
@@ -260,7 +409,9 @@ export class TasksService {
       throw new BadRequestException(ERROR_MESSAGES.TASKS.ASSIGNEE_NOT_IN_GROUP);
     }
 
-    const user = await this.userRepository.findOne({ where: { id: assigneeId } });
+    const user = await this.userRepository.findOne({
+      where: { id: assigneeId },
+    });
     if (!user) {
       throw new BadRequestException(ERROR_MESSAGES.TASKS.ASSIGNEE_NOT_IN_GROUP);
     }
