@@ -1,4 +1,6 @@
 export { AuthProvider } from './auth-provider.enum';
+export { ChatConversationStatus } from './chat-conversation-status.enum';
+export { ChatMessageType } from './chat-message-type.enum';
 export { ClassStatus } from './class-status.enum';
 export { DocumentStatus } from './document-status.enum';
 export { GroupStatus } from './group-status.enum';

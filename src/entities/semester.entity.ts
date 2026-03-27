@@ -7,6 +7,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { SemesterStatus } from '../common/enums/semester-status.enum';
+import { Conversation } from './conversation.entity';
 import { ExaminerAssignment } from './examiner-assignment.entity';
 import { GroupReview } from './group-review.entity';
 import { ImportBatch } from './import-batch.entity';
@@ -66,4 +67,7 @@ export class Semester {
     (assignment) => assignment.semester,
   )
   examiner_assignments: ExaminerAssignment[];
+
+  @OneToMany(() => Conversation, (conversation) => conversation.semester)
+  conversations: Conversation[];
 }

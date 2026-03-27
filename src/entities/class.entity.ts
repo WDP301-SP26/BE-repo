@@ -11,6 +11,7 @@ import {
 import { ClassStatus } from '../common/enums';
 import { ClassMembership } from './class-membership.entity';
 import { ExaminerAssignment } from './examiner-assignment.entity';
+import { Conversation } from './conversation.entity';
 import { Group } from './group.entity';
 import { TeachingAssignment } from './teaching-assignment.entity';
 import { User } from './user.entity';
@@ -71,4 +72,7 @@ export class Class {
     (assignment) => assignment.class,
   )
   examiner_assignments: ExaminerAssignment[];
+
+  @OneToMany(() => Conversation, (conversation) => conversation.class)
+  conversations: Conversation[];
 }

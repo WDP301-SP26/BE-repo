@@ -37,12 +37,12 @@ import {
 import { GithubService } from '../github/github.service';
 import { BulkExaminerAssignmentDto } from './dto/bulk-examiner-assignment.dto';
 import { BulkTeachingAssignmentDto } from './dto/bulk-teaching-assignment.dto';
-import { CreateSemesterDto } from './dto/create-semester.dto';
 import { CreateSemesterLecturerDto } from './dto/create-semester-lecturer.dto';
 import { CreateSemesterStudentDto } from './dto/create-semester-student.dto';
-import { UpdateSemesterDto } from './dto/update-semester.dto';
+import { CreateSemesterDto } from './dto/create-semester.dto';
 import { UpdateSemesterLecturerDto } from './dto/update-semester-lecturer.dto';
 import { UpdateSemesterStudentDto } from './dto/update-semester-student.dto';
+import { UpdateSemesterDto } from './dto/update-semester.dto';
 import { UpsertGroupReviewDto } from './dto/upsert-group-review.dto';
 import { SemesterImportRow } from './utils/semester-import.util';
 
@@ -879,30 +879,37 @@ export class SemesterService {
     });
     const classIds = classes.map((item) => item.id);
 
-    const [teachingAssignments, examinerAssignments, studentMemberships, lecturers] =
-      await Promise.all([
-        this.teachingAssignmentRepository.find({
-          where: { semester_id: semester.id },
-          relations: ['class', 'lecturer'],
-        }),
-        this.examinerAssignmentRepository.find({
-          where: { semester_id: semester.id },
-          relations: ['class', 'lecturer'],
-        }),
-        classIds.length === 0
-          ? Promise.resolve([])
-          : this.classMembershipRepository.find({
-              where: { class_id: In(classIds) },
-              relations: ['class', 'user'],
-            }),
-        this.userRepository.find({
-          where: { role: Role.LECTURER },
-          order: { full_name: 'ASC', email: 'ASC' },
-        }),
-      ]);
+    const [
+      teachingAssignments,
+      examinerAssignments,
+      studentMemberships,
+      lecturers,
+    ] = await Promise.all([
+      this.teachingAssignmentRepository.find({
+        where: { semester_id: semester.id },
+        relations: ['class', 'lecturer'],
+      }),
+      this.examinerAssignmentRepository.find({
+        where: { semester_id: semester.id },
+        relations: ['class', 'lecturer'],
+      }),
+      classIds.length === 0
+        ? Promise.resolve([])
+        : this.classMembershipRepository.find({
+            where: { class_id: In(classIds) },
+            relations: ['class', 'user'],
+          }),
+      this.userRepository.find({
+        where: { role: Role.LECTURER },
+        order: { full_name: 'ASC', email: 'ASC' },
+      }),
+    ]);
 
     const teachingByClassId = new Map(
-      teachingAssignments.map((assignment) => [assignment.class_id, assignment]),
+      teachingAssignments.map((assignment) => [
+        assignment.class_id,
+        assignment,
+      ]),
     );
     const examinerByClassId = new Map<string, ExaminerAssignment[]>();
     for (const assignment of examinerAssignments) {
@@ -920,7 +927,8 @@ export class SemesterService {
 
     const classRows = classes.map((classItem) => {
       const teachingAssignment = teachingByClassId.get(classItem.id);
-      const teachingLecturer = teachingAssignment?.lecturer || classItem.lecturer;
+      const teachingLecturer =
+        teachingAssignment?.lecturer || classItem.lecturer;
       const classExaminers = examinerByClassId.get(classItem.id) || [];
       return {
         id: classItem.id,
@@ -928,10 +936,12 @@ export class SemesterService {
         name: classItem.name,
         lecturer_id: teachingLecturer?.id || classItem.lecturer_id,
         lecturer_name: teachingLecturer?.full_name || null,
-        student_count: (studentMembershipsByClassId.get(classItem.id) || []).length,
+        student_count: (studentMembershipsByClassId.get(classItem.id) || [])
+          .length,
         examiner_assignments: classExaminers.map((assignment) => ({
           lecturer_id: assignment.lecturer_id,
-          lecturer_name: assignment.lecturer?.full_name || assignment.lecturer?.email,
+          lecturer_name:
+            assignment.lecturer?.full_name || assignment.lecturer?.email,
           lecturer_email: assignment.lecturer?.email || null,
         })),
       };
@@ -982,8 +992,10 @@ export class SemesterService {
         classes_total: classes.length,
         lecturers_total: lecturers.length,
         students_total: studentRows.length,
-        assigned_classes_total: classRows.filter((row) => !!row.lecturer_id).length,
-        unassigned_classes_total: classRows.filter((row) => !row.lecturer_id).length,
+        assigned_classes_total: classRows.filter((row) => !!row.lecturer_id)
+          .length,
+        unassigned_classes_total: classRows.filter((row) => !row.lecturer_id)
+          .length,
         examiner_assignments_total: examinerAssignments.length,
         can_assign_examiners: semester.current_week >= 10,
       },
@@ -1049,7 +1061,12 @@ export class SemesterService {
       }),
     );
 
-    return lecturer;
+    return {
+      id: lecturer.id,
+      email: lecturer.email,
+      full_name: lecturer.full_name,
+      role: lecturer.role,
+    };
   }
 
   async updateSemesterLecturer(
@@ -1087,11 +1104,18 @@ export class SemesterService {
       lecturer.password_hash = await bcrypt.hash(dto.password.trim(), 10);
     }
 
-    return this.userRepository.save(lecturer);
+    const savedLecturer = await this.userRepository.save(lecturer);
+    return {
+      id: savedLecturer.id,
+      email: savedLecturer.email,
+      full_name: savedLecturer.full_name,
+      role: savedLecturer.role,
+    };
   }
 
   async deleteSemesterLecturer(semesterId: string, lecturerId: string) {
-    await this.getSemesterOrThrow(semesterId);
+    const semester = await this.getSemesterOrThrow(semesterId);
+    this.assertSemesterRosterEditable(semester);
 
     const lecturer = await this.userRepository.findOne({
       where: { id: lecturerId, role: Role.LECTURER },
@@ -1102,7 +1126,9 @@ export class SemesterService {
 
     const [teachingCount, examinerCount] = await Promise.all([
       this.classRepository.count({ where: { lecturer_id: lecturerId } }),
-      this.examinerAssignmentRepository.count({ where: { lecturer_id: lecturerId } }),
+      this.examinerAssignmentRepository.count({
+        where: { lecturer_id: lecturerId },
+      }),
     ]);
 
     if (teachingCount > 0 || examinerCount > 0) {
@@ -1123,7 +1149,10 @@ export class SemesterService {
     const semester = await this.getSemesterOrThrow(semesterId);
     this.assertSemesterRosterEditable(semester);
 
-    const targetClass = await this.getSemesterClassOrThrow(semester.code, dto.class_id);
+    const targetClass = await this.getSemesterClassOrThrow(
+      semester.code,
+      dto.class_id,
+    );
     const email = dto.email.trim().toLowerCase();
     let student = await this.userRepository.findOne({ where: { email } });
 
@@ -1163,7 +1192,11 @@ export class SemesterService {
             },
           });
 
-    if (existingMemberships.some((membership) => membership.class_id === targetClass.id)) {
+    if (
+      existingMemberships.some(
+        (membership) => membership.class_id === targetClass.id,
+      )
+    ) {
       throw this.buildConflict(
         'STUDENT_ALREADY_IN_SEMESTER',
         'Student is already enrolled in the selected class for this semester.',
@@ -1233,7 +1266,10 @@ export class SemesterService {
     await this.userRepository.save(student);
 
     if (dto.class_id) {
-      const targetClass = await this.getSemesterClassOrThrow(semester.code, dto.class_id);
+      const targetClass = await this.getSemesterClassOrThrow(
+        semester.code,
+        dto.class_id,
+      );
       const semesterClassIds = await this.getSemesterClassIds(semester.code);
       const existingMemberships =
         semesterClassIds.length === 0
@@ -1271,6 +1307,7 @@ export class SemesterService {
 
   async deleteSemesterStudent(semesterId: string, studentId: string) {
     const semester = await this.getSemesterOrThrow(semesterId);
+    this.assertSemesterRosterEditable(semester);
     const semesterClassIds = await this.getSemesterClassIds(semester.code);
     if (semesterClassIds.length === 0) {
       throw this.buildNotFound(
@@ -1377,7 +1414,9 @@ export class SemesterService {
         : await this.userRepository.find({
             where: uniqueLecturerIds.map((id) => ({ id, role: Role.LECTURER })),
           });
-    const lecturerMap = new Map(lecturers.map((lecturer) => [lecturer.id, lecturer]));
+    const lecturerMap = new Map(
+      lecturers.map((lecturer) => [lecturer.id, lecturer]),
+    );
 
     for (const assignment of dto.assignments) {
       const targetClass = classMap.get(assignment.class_id);
@@ -1404,7 +1443,9 @@ export class SemesterService {
       }
     }
 
-    const targetClassIds = dto.assignments.map((assignment) => assignment.class_id);
+    const targetClassIds = dto.assignments.map(
+      (assignment) => assignment.class_id,
+    );
     if (targetClassIds.length > 0) {
       await this.examinerAssignmentRepository.delete({
         semester_id: semester.id,
@@ -2206,7 +2247,10 @@ export class SemesterService {
     return targetClass;
   }
 
-  private async getSemesterRosterStudent(semesterCode: string, studentId: string) {
+  private async getSemesterRosterStudent(
+    semesterCode: string,
+    studentId: string,
+  ) {
     const semesterClassIds = await this.getSemesterClassIds(semesterCode);
     const membership =
       semesterClassIds.length === 0
