@@ -695,3 +695,128 @@ BE-repo/
 - Try the [API Testing](#api-testing) guide
 - Open an issue on GitHub
 - Contact the development team
+
+---
+
+## Chat APIs
+
+### REST endpoints
+
+- `POST /api/chat/conversations`
+  - Get or create a 1-1 conversation for a valid `semester_id + class_id + student_id + lecturer_id` context.
+  - Rules:
+    - student must belong to the class
+    - lecturer must teach the class
+    - class must belong to the semester
+    - caller must be either the student side or lecturer side of that conversation
+- `GET /api/chat/conversations`
+  - List current user's conversations
+  - Returns `unread_count`, `last_message`, `last_message_at`, `last_message_preview`
+- `GET /api/chat/conversations/:id/messages?cursor=&limit=`
+  - Cursor pagination ordered by `created_at DESC`
+- `POST /api/chat/conversations/:id/messages`
+  - Send a message into a conversation you belong to
+  - Supports optional `client_id` for idempotency
+- `PATCH /api/chat/conversations/:id/read`
+  - Mark all unread incoming messages in a conversation as read
+- `PATCH /api/chat/messages/:id/read`
+  - Backward-compatible read API, marks all unread incoming messages up to that message as read
+
+### Conversation request shape
+
+```json
+{
+  "semester_id": "11111111-1111-1111-1111-111111111111",
+  "class_id": "22222222-2222-2222-2222-222222222222",
+  "student_id": "33333333-3333-3333-3333-333333333333",
+  "lecturer_id": "44444444-4444-4444-4444-444444444444"
+}
+```
+
+### Send message request shape
+
+```json
+{
+  "content": "Hello teacher, I have updated the report.",
+  "type": "TEXT",
+  "client_id": "mobile-msg-001"
+}
+```
+
+### Message pagination response
+
+```json
+{
+  "data": [
+    {
+      "id": "msg-1",
+      "conversation_id": "conv-1",
+      "sender_id": "student-1",
+      "content": "Hello teacher",
+      "type": "TEXT",
+      "client_id": "mobile-msg-001",
+      "read_by_recipient_at": null,
+      "created_at": "2026-03-27T10:00:00.000Z",
+      "updated_at": "2026-03-27T10:00:00.000Z"
+    }
+  ],
+  "meta": {
+    "next_cursor": "2026-03-27T09:55:00.000Z",
+    "limit": 20,
+    "has_more": true
+  }
+}
+```
+
+### Socket contract
+
+Namespace: `/chat`
+
+Handshake auth:
+- JWT token via `auth.token`
+- or `Authorization: Bearer <token>`
+- or `query.token`
+
+Client events:
+- `chat:send`
+- `chat:read`
+- `chat:typing:start`
+- `chat:typing:stop`
+
+Server events:
+- `chat:new`
+- `chat:read`
+- `chat:typing`
+- `chat:error`
+
+Event payload core fields:
+- `conversation_id`
+- `message_id`
+- `sender_id`
+- `content`
+- `created_at`
+- `client_id`
+
+Read flow for mobile:
+1. Call `GET /api/chat/conversations`
+2. Open detail and call `GET /api/chat/conversations/:id/messages`
+3. After rendering latest messages, call `PATCH /api/chat/conversations/:id/read`
+4. Listen to `chat:read` to keep state in sync across devices
+
+### Error code dictionary
+
+- `CHAT_FORBIDDEN`
+- `CHAT_INVALID_CONTEXT`
+- `CHAT_INVALID_PAYLOAD`
+- `CHAT_DUPLICATE_CLIENT_ID`
+- `CHAT_NOT_FOUND`
+- `CHAT_CLOSED`
+- `CHAT_RATE_LIMITED`
+
+### Mobile Owner quick integration notes
+
+- Use REST for initial conversation list and history.
+- Use socket `/chat` only for realtime updates.
+- Use `client_id` per outbound message to avoid duplicate sends after retry.
+- Use `PATCH /api/chat/conversations/:id/read` as the main read API.
+- Do not assume the client can create arbitrary conversations; server validates semester/class/student/lecturer context strictly.
