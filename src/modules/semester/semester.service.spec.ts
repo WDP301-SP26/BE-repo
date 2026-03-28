@@ -82,10 +82,19 @@ describe('SemesterService', () => {
       ...entity,
     }));
     rowLogRepo.save.mockImplementation(async (entity) => entity);
-    classRepo.save.mockImplementation(async (entity) => ({
-      id: entity.id ?? 'class-1',
-      ...entity,
-    }));
+    classRepo.save.mockImplementation(async (entity) => {
+      if (Array.isArray(entity)) {
+        return entity.map((item, index) => ({
+          id: item.id ?? `class-${index + 1}`,
+          ...item,
+        }));
+      }
+
+      return {
+        id: entity.id ?? 'class-1',
+        ...entity,
+      };
+    });
     userRepo.save.mockImplementation(async (entity) => ({
       id: entity.id ?? `user-${entity.email}`,
       ...entity,
@@ -166,6 +175,8 @@ describe('SemesterService', () => {
 
   it('creates semester with uppercase code and rejects duplicates', async () => {
     semesterRepo.findOne.mockResolvedValueOnce(null);
+    classRepo.find.mockResolvedValueOnce([]);
+    userRepo.findOne.mockResolvedValueOnce(null);
     semesterRepo.save.mockImplementation(async (entity) => ({
       id: 'semester-1',
       ...entity,
@@ -180,6 +191,13 @@ describe('SemesterService', () => {
     });
 
     expect(result.code).toBe('SP26');
+    expect(classRepo.save).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'SWP391-1001', semester: 'SP26' }),
+        expect.objectContaining({ code: 'SWP391-1002', semester: 'SP26' }),
+        expect.objectContaining({ code: 'SWP391-1003', semester: 'SP26' }),
+      ]),
+    );
 
     semesterRepo.findOne.mockResolvedValueOnce({ id: 'semester-2' });
 
@@ -736,7 +754,15 @@ describe('SemesterService', () => {
       status: SemesterStatus.ACTIVE,
     });
     userRepo.find.mockResolvedValue([]);
-    classRepo.find.mockResolvedValue([]);
+    classRepo.find.mockResolvedValue([
+      {
+        id: 'class-1',
+        code: 'SWP391',
+        name: 'Software Project',
+        semester: 'SP26',
+        lecturer_id: 'lecturer-1',
+      },
+    ]);
 
     const result = await service.processImport(
       'semester-1',
@@ -768,7 +794,8 @@ describe('SemesterService', () => {
     expect(result.readyForImport).toBe(true);
     expect(result.summary.rows.success).toBe(2);
     expect(result.summary.rows.failed).toBe(0);
-    expect(result.summary.classes.created).toBe(1);
+    expect(result.summary.classes.created).toBe(0);
+    expect(result.summary.classes.updated).toBe(1);
     expect(result.summary.lecturers.created).toBe(0);
     expect(result.summary.students.created).toBe(2);
     expect(result.rows).toHaveLength(2);
@@ -782,7 +809,15 @@ describe('SemesterService', () => {
       status: SemesterStatus.ACTIVE,
     });
     userRepo.find.mockResolvedValue([]);
-    classRepo.find.mockResolvedValue([]);
+    classRepo.find.mockResolvedValue([
+      {
+        id: 'class-1',
+        code: 'SWP391',
+        name: 'Software Project',
+        semester: 'SP26',
+        lecturer_id: 'lecturer-1',
+      },
+    ]);
     classMembershipRepo.findOne.mockResolvedValue(null);
 
     const result = await service.processImport(
@@ -815,9 +850,10 @@ describe('SemesterService', () => {
     expect(result.readyForImport).toBe(false);
     expect(result.summary.rows.success).toBe(1);
     expect(result.summary.rows.failed).toBe(1);
-    expect(result.summary.classes.created).toBe(1);
+    expect(result.summary.classes.created).toBe(0);
+    expect(result.summary.classes.updated).toBe(1);
     expect(result.summary.enrollments.created).toBe(1);
-    expect(groupRepo.insert).toHaveBeenCalledTimes(1);
+    expect(groupRepo.insert).not.toHaveBeenCalled();
     expect(rowLogRepo.save).toHaveBeenCalled();
     expect(result.rows.some((row) => row.status === 'FAILED')).toBe(true);
   });

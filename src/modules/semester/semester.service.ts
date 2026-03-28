@@ -81,6 +81,12 @@ export interface SerializedSemester {
 @Injectable()
 export class SemesterService {
   private readonly logger = new Logger(SemesterService.name);
+  private readonly defaultSemesterClassCodes = [
+    'SWP391-1001',
+    'SWP391-1002',
+    'SWP391-1003',
+  ] as const;
+  private readonly seedLecturerEmail = 'system.seed.lecturer@swp391.local';
 
   constructor(
     private readonly configService: ConfigService,
@@ -130,7 +136,9 @@ export class SemesterService {
       status: dto.status || SemesterStatus.UPCOMING,
     });
 
-    return this.semesterRepository.save(semester);
+    const savedSemester = await this.semesterRepository.save(semester);
+    await this.seedDefaultClassesForSemester(savedSemester.code);
+    return savedSemester;
   }
 
   async listSemesters() {
@@ -1566,18 +1574,12 @@ export class SemesterService {
         })
       ).map((classItem) => [`${semester.code}:${classItem.code}`, classItem]),
     );
-    const createdClasses = new Map<string, Class>();
-
-    const ensureClassForCode = async (classCode: string, className: string) => {
+    const ensureClassForCode = (classCode: string, className?: string) => {
       const key = `${semester.code}:${classCode}`;
-      const currentClass = createdClasses.get(key) || existingClasses.get(key);
+      const currentClass = existingClasses.get(key);
       if (currentClass) {
-        if (
-          mode === 'IMPORT' &&
-          currentClass.id.startsWith('preview-') === false &&
-          currentClass.name !== className
-        ) {
-          await this.classRepository.update(
+        if (mode === 'IMPORT' && className && currentClass.name !== className) {
+          void this.classRepository.update(
             { id: currentClass.id },
             { name: className },
           );
@@ -1588,41 +1590,7 @@ export class SemesterService {
         return currentClass;
       }
 
-      if (mode === 'VALIDATE') {
-        markCounter('classes', 'created', key);
-        return {
-          id: `preview-${classCode}`,
-          code: classCode,
-          name: className,
-          semester: semester.code,
-          lecturer_id: null,
-          enrollment_key: 'PREVIEW',
-        } as Class;
-      }
-
-      const savedClass = await this.classRepository.save(
-        this.classRepository.create({
-          code: classCode,
-          name: className,
-          semester: semester.code,
-          lecturer_id: null,
-          enrollment_key: randomBytes(4).toString('hex').toUpperCase(),
-        }),
-      );
-
-      await this.groupRepository.insert(
-        Array.from({ length: 7 }).map((_, index) => ({
-          name: `Group ${index + 1}`,
-          class_id: savedClass.id,
-          created_by_id: uploadedById,
-          semester: semester.code,
-        })),
-      );
-
-      createdClasses.set(key, savedClass);
-      markCounter('classes', 'created', key);
-
-      return savedClass;
+      return null;
     };
 
     for (const row of rows) {
@@ -1631,7 +1599,7 @@ export class SemesterService {
       const normalizedSemesterCode = row.semester_code.trim().toUpperCase();
       const normalizedEmail = row.email.trim().toLowerCase();
       const normalizedClassCode = row.class_code.trim().toUpperCase();
-      const normalizedClassName = row.class_name.trim();
+      const normalizedClassName = row.class_name?.trim();
       const logPayload = { ...row };
 
       const fail = (message: string) => {
@@ -1660,15 +1628,8 @@ export class SemesterService {
         fail('Role must be STUDENT when provided.');
         continue;
       }
-      if (
-        !normalizedSemesterCode ||
-        !normalizedEmail ||
-        !normalizedClassCode ||
-        !normalizedClassName
-      ) {
-        fail(
-          'Missing required fields: semester_code, email, class_code, class_name.',
-        );
+      if (!normalizedSemesterCode || !normalizedEmail || !normalizedClassCode) {
+        fail('Missing required fields: semester_code, email, class_code.');
         continue;
       }
       if (normalizedSemesterCode !== semester.code) {
@@ -1723,10 +1684,16 @@ export class SemesterService {
           markCounter('students', 'updated', normalizedEmail);
         }
 
-        const targetClass = await ensureClassForCode(
+        const targetClass = ensureClassForCode(
           normalizedClassCode,
           normalizedClassName,
         );
+        if (!targetClass) {
+          fail(
+            `Class ${normalizedClassCode} is not provisioned in selected semester. Admin must create/maintain classes before student import.`,
+          );
+          continue;
+        }
 
         if (mode === 'IMPORT') {
           const existingMembership =
@@ -2233,6 +2200,74 @@ export class SemesterService {
       start_date: semester.start_date,
       end_date: semester.end_date,
     };
+  }
+
+  private async seedDefaultClassesForSemester(semesterCode: string) {
+    const existingClasses =
+      (await this.classRepository.find({
+        where: this.defaultSemesterClassCodes.map((code) => ({
+          code,
+          semester: semesterCode,
+        })),
+      })) || [];
+
+    const existingCodes = new Set(existingClasses.map((item) => item.code));
+    const missingCodes = this.defaultSemesterClassCodes.filter(
+      (code) => !existingCodes.has(code),
+    );
+
+    if (missingCodes.length === 0) {
+      return;
+    }
+
+    const lecturerId = await this.getOrCreateSeedLecturerId();
+    const classesToSeed = missingCodes.map((code) =>
+      this.classRepository.create({
+        code,
+        name: code,
+        semester: semesterCode,
+        lecturer_id: lecturerId,
+        enrollment_key: randomBytes(4).toString('hex').toUpperCase(),
+      }),
+    );
+
+    await this.classRepository.save(classesToSeed);
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'semester_default_classes_seeded',
+        semester_code: semesterCode,
+        class_codes: missingCodes,
+      }),
+    );
+  }
+
+  private async getOrCreateSeedLecturerId() {
+    const existing = await this.userRepository.findOne({
+      where: { email: this.seedLecturerEmail },
+    });
+
+    if (existing) {
+      if (existing.role !== Role.LECTURER) {
+        throw new ConflictException(
+          `Seed lecturer email ${this.seedLecturerEmail} already exists with a non-lecturer role.`,
+        );
+      }
+      return existing.id;
+    }
+
+    const seedLecturer = await this.userRepository.save(
+      this.userRepository.create({
+        email: this.seedLecturerEmail,
+        full_name: 'System Seed Lecturer',
+        password_hash: null,
+        role: Role.LECTURER,
+        primary_provider: AuthProvider.EMAIL,
+        is_email_verified: true,
+      }),
+    );
+
+    return seedLecturer.id;
   }
 
   private isWeekOverrideEnabled() {

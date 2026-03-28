@@ -8,7 +8,7 @@ export interface SemesterImportRow {
   email: string;
   full_name: string;
   class_code: string;
-  class_name: string;
+  class_name?: string;
   student_id: string;
 }
 
@@ -22,7 +22,6 @@ const REQUIRED_HEADERS = [
   'email',
   'full_name',
   'class_code',
-  'class_name',
   'student_id',
 ];
 
@@ -96,7 +95,7 @@ export async function parseSemesterImportFile(
       email,
       full_name: fullName,
       class_code: classCode,
-      class_name: className,
+      class_name: className || undefined,
       student_id: studentId,
     });
   });

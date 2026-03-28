@@ -10,7 +10,6 @@ describe('parseSemesterImportFile', () => {
       'email',
       'full_name',
       'class_code',
-      'class_name',
       'student_id',
     ]);
     sheet.addRow([
@@ -18,7 +17,6 @@ describe('parseSemesterImportFile', () => {
       'student1@fpt.edu.vn',
       'Student A',
       'SWP391',
-      'Software Project',
       'SE0001',
     ]);
     sheet.addRow([
@@ -26,7 +24,6 @@ describe('parseSemesterImportFile', () => {
       'student2@fpt.edu.vn',
       'Student B',
       'SWP391',
-      'Software Project',
       'SE0002',
     ]);
 
@@ -54,8 +51,8 @@ describe('parseSemesterImportFile', () => {
   it('throws when required semester-first columns are missing', async () => {
     const workbook = new Workbook();
     const sheet = workbook.addWorksheet('Import');
-    sheet.addRow(['email', 'class_code', 'class_name']);
-    sheet.addRow(['student@fpt.edu.vn', 'SWP391', 'Software']);
+    sheet.addRow(['email', 'class_code']);
+    sheet.addRow(['student@fpt.edu.vn', 'SWP391']);
 
     const buffer = await workbook.xlsx.writeBuffer();
 
