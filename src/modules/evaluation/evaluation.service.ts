@@ -70,7 +70,11 @@ export class EvaluationService {
       );
       await manager.save(contributions);
 
-      return this.findOne(savedEvaluation.id, userId, userRole);
+      const full = await manager.findOne(Evaluation, {
+        where: { id: savedEvaluation.id },
+        relations: ['createdBy', 'contributions', 'contributions.user'],
+      });
+      return this.formatEvaluationDetail(full!);
     });
   }
 
@@ -192,7 +196,12 @@ export class EvaluationService {
       }
 
       await manager.save(evaluation);
-      return this.findOne(evaluationId, userId, userRole);
+
+      const full = await manager.findOne(Evaluation, {
+        where: { id: evaluationId },
+        relations: ['createdBy', 'contributions', 'contributions.user'],
+      });
+      return this.formatEvaluationDetail(full!);
     });
   }
 

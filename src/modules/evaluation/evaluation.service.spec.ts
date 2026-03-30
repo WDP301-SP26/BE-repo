@@ -102,6 +102,7 @@ function createMockDataSource() {
           return { ...data, id: EVAL_ID };
         }),
         delete: jest.fn(),
+        findOne: jest.fn().mockResolvedValue(mockEvaluation),
       };
       return cb(manager);
     }),
@@ -162,8 +163,6 @@ describe('EvaluationService', () => {
       groupRepo.findOne.mockResolvedValue(mockGroup);
       membershipRepo.findOne.mockResolvedValue(mockMemberships[0]); // leader
       membershipRepo.find.mockResolvedValue(mockMemberships);
-      // findOne called after creation for formatting
-      evaluationRepo.findOne.mockResolvedValue(mockEvaluation);
 
       const result = await service.createEvaluation(
         validDto,
@@ -200,7 +199,6 @@ describe('EvaluationService', () => {
     it('should allow lecturer to create evaluation', async () => {
       groupRepo.findOne.mockResolvedValue(mockGroup);
       membershipRepo.find.mockResolvedValue(mockMemberships);
-      evaluationRepo.findOne.mockResolvedValue(mockEvaluation);
 
       const result = await service.createEvaluation(
         validDto,
@@ -234,7 +232,6 @@ describe('EvaluationService', () => {
       groupRepo.findOne.mockResolvedValue(mockGroup);
       membershipRepo.findOne.mockResolvedValue(mockMemberships[0]);
       membershipRepo.find.mockResolvedValue(mockMemberships);
-      evaluationRepo.findOne.mockResolvedValue(mockEvaluation);
 
       const tolerantDto = {
         ...validDto,
@@ -300,11 +297,11 @@ describe('EvaluationService', () => {
 
   describe('update', () => {
     it('should update contributions (full replacement)', async () => {
-      evaluationRepo.findOne
-        .mockResolvedValueOnce({ ...mockEvaluation, created_by_id: USER_ID })
-        .mockResolvedValueOnce(mockEvaluation);
+      evaluationRepo.findOne.mockResolvedValue({
+        ...mockEvaluation,
+        created_by_id: USER_ID,
+      });
       membershipRepo.find.mockResolvedValue(mockMemberships);
-      membershipRepo.findOne.mockResolvedValue(mockMemberships[0]); // for findOne membership check
 
       const result = await service.update(
         EVAL_ID,
