@@ -21,6 +21,7 @@ import type { AuthorizedRequest } from '../auth/auth.controller';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { PublishMilestoneReviewsDto } from './dto/publish-milestone-reviews.dto';
 import { SetCurrentWeekDto } from './dto/set-current-week.dto';
 import { UpsertGroupReviewDto } from './dto/upsert-group-review.dto';
 import { SemesterService } from './semester.service';
@@ -142,5 +143,33 @@ export class SemesterGovernanceController {
       req.user.role as Role,
       dto,
     );
+  }
+
+  @Patch('current/reviews/publish')
+  @Roles(Role.LECTURER, Role.ADMIN)
+  @ApiOperation({
+    summary:
+      'Publish review scores for a milestone, making them visible to students',
+  })
+  async publishMilestoneReviews(
+    @Req() req: AuthorizedRequest,
+    @Body() dto: PublishMilestoneReviewsDto,
+  ) {
+    return this.semesterService.publishMilestoneReviews(
+      dto.milestone_code,
+      req.user.id,
+      req.user.role as Role,
+      dto.class_id,
+    );
+  }
+
+  @Get('current/reviews/student-scores')
+  @Roles(Role.STUDENT, Role.GROUP_LEADER)
+  @ApiOperation({
+    summary:
+      'Get all published milestone scores across all checkpoints for the calling student',
+  })
+  async getStudentPublishedScores(@Req() req: AuthorizedRequest) {
+    return this.semesterService.getStudentPublishedScores(req.user.id);
   }
 }

@@ -75,6 +75,9 @@ export class GroupReview {
   @Column({ type: 'timestamptz', nullable: true })
   snapshot_captured_at: Date | null;
 
+  @Column({ type: 'boolean', default: false })
+  is_published: boolean;
+
   @Column({ type: 'uuid', nullable: true })
   updated_by_id: string | null;
 

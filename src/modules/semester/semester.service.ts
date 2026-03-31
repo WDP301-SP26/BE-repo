@@ -853,9 +853,151 @@ export class SemesterService {
         class_id: group.class_id,
         class_code: group.class.code,
         class_name: group.class.name,
-        ...this.serializeReviewGroup(group, reviewMap.get(group.id), milestone),
+        ...this.serializeReviewGroup(group, reviewMap.get(group.id), milestone, true),
       })),
     };
+  }
+
+  async publishMilestoneReviews(
+    milestoneCode: ReviewMilestoneCode,
+    userId: string,
+    userRole: Role,
+    classId?: string,
+  ): Promise<{ updated_count: number }> {
+    const semester = await this.getCurrentSemester();
+    if (!semester) {
+      throw new NotFoundException('No active semester found.');
+    }
+
+    // Build query for matching reviews
+    const qb = this.groupReviewRepository
+      .createQueryBuilder('review')
+      .innerJoin('review.group', 'grp')
+      .innerJoin(Class, 'cls', 'cls.id = grp.class_id')
+      .where('review.semester_id = :semesterId', { semesterId: semester.id })
+      .andWhere('review.milestone_code = :milestoneCode', { milestoneCode })
+      .andWhere('review.is_published = :isPublished', { isPublished: false });
+
+    // Scope to lecturer's classes unless admin
+    if (userRole !== Role.ADMIN) {
+      if (classId) {
+        qb.andWhere('cls.id = :classId AND cls.lecturer_id = :lecturerId', {
+          classId,
+          lecturerId: userId,
+        });
+      } else {
+        qb.andWhere('cls.lecturer_id = :lecturerId', {
+          lecturerId: userId,
+        });
+      }
+    } else if (classId) {
+      qb.andWhere('cls.id = :classId', { classId });
+    }
+
+    const reviews = await qb.getMany();
+
+    if (reviews.length === 0) {
+      return { updated_count: 0 };
+    }
+
+    await this.groupReviewRepository.update(
+      reviews.map((r) => r.id),
+      { is_published: true },
+    );
+
+    return { updated_count: reviews.length };
+  }
+
+  async getStudentPublishedScores(userId: string) {
+    const semester = await this.getCurrentSemester();
+    if (!semester) {
+      return { semester: null, milestones: [] };
+    }
+
+    // Get student's current groups in this semester
+    const groupMemberships = await this.groupMembershipRepository.find({
+      where: { user_id: userId, left_at: IsNull() },
+      relations: ['group', 'group.class', 'group.topic'],
+    });
+
+    const currentGroups = groupMemberships
+      .map((m) => m.group)
+      .filter(
+        (g): g is Group & { class: Class } =>
+          !!g && !!g.class && g.class.semester === semester.code,
+      );
+
+    if (currentGroups.length === 0) {
+      return { semester: this.serializeSemester(semester), milestones: [] };
+    }
+
+    // Get ALL published reviews for these groups
+    const publishedReviews = await this.groupReviewRepository.find({
+      where: {
+        semester_id: semester.id,
+        group_id: In(currentGroups.map((g) => g.id)),
+        is_published: true,
+      },
+      order: { week_start: 'ASC' },
+    });
+
+    // Group by milestone
+    const milestoneMap = new Map<
+      string,
+      { milestone: ReviewMilestoneContext; groups: any[] }
+    >();
+
+    for (const review of publishedReviews) {
+      const key = review.milestone_code;
+      if (!milestoneMap.has(key)) {
+        milestoneMap.set(key, {
+          milestone: {
+            code: review.milestone_code,
+            label: this.getMilestoneLabel(review.milestone_code),
+            week_start: review.week_start,
+            week_end: review.week_end,
+          },
+          groups: [],
+        });
+      }
+
+      const group = currentGroups.find((g) => g.id === review.group_id);
+      if (group) {
+        const totalScore =
+          (Number(review.task_progress_score ?? 0) || 0) +
+          (Number(review.commit_contribution_score ?? 0) || 0) +
+          (Number(review.review_milestone_score ?? 0) || 0);
+
+        milestoneMap.get(key)!.groups.push({
+          group_id: group.id,
+          group_name: group.name,
+          topic_name: group.topic?.name || group.project_name || null,
+          scores: {
+            task_progress_score: review.task_progress_score,
+            commit_contribution_score: review.commit_contribution_score,
+            review_milestone_score: review.review_milestone_score,
+            total_score: Number(totalScore.toFixed(2)),
+          },
+          lecturer_note: review.lecturer_note,
+        });
+      }
+    }
+
+    return {
+      semester: this.serializeSemester(semester),
+      milestones: Array.from(milestoneMap.values()),
+    };
+  }
+
+  private getMilestoneLabel(code: ReviewMilestoneCode): string {
+    const labels: Record<string, string> = {
+      REVIEW_1: 'Review 1',
+      PROGRESS_TRACKING: 'Progress Tracking',
+      REVIEW_2: 'Review 2',
+      REVIEW_3: 'Review 3',
+      FINAL_PRESENTATION: 'Final Presentation',
+    };
+    return labels[code] || code;
   }
 
   async updateSemester(id: string, dto: UpdateSemesterDto) {
@@ -1836,6 +1978,15 @@ export class SemesterService {
       };
     }
 
+    if (currentWeek >= 11 && currentWeek <= 12) {
+      return {
+        code: ReviewMilestoneCode.FINAL_PRESENTATION,
+        label: 'Final Presentation',
+        week_start: 11,
+        week_end: 12,
+      };
+    }
+
     return null;
   }
 
@@ -1865,8 +2016,11 @@ export class SemesterService {
     },
     review: GroupReview | undefined,
     milestone: ReviewMilestoneContext | null,
+    forStudent = false,
   ) {
     const warnings = this.buildReviewWarnings(review, milestone);
+    const isPublished = review?.is_published ?? false;
+    const showScores = !forStudent || isPublished;
     const reviewStatus: ReviewMilestoneStatus = review ? 'REVIEWED' : 'PENDING';
     const totalScore =
       (Number(review?.task_progress_score ?? 0) || 0) +
@@ -1878,21 +2032,39 @@ export class SemesterService {
       group_name: group.name,
       topic_name: group.topic?.name || group.project_name || null,
       review_status: reviewStatus,
-      scores: {
-        task_progress_score: review?.task_progress_score ?? null,
-        commit_contribution_score: review?.commit_contribution_score ?? null,
-        review_milestone_score: review?.review_milestone_score ?? null,
-        total_score: review ? Number(totalScore.toFixed(2)) : null,
-      },
-      lecturer_note: review?.lecturer_note ?? null,
-      snapshot: {
-        task_total: review?.snapshot_task_total ?? 0,
-        task_done: review?.snapshot_task_done ?? 0,
-        commit_total: review?.snapshot_commit_total ?? null,
-        commit_contributors: review?.snapshot_commit_contributors ?? null,
-        repository: review?.snapshot_repository ?? null,
-        captured_at: review?.snapshot_captured_at ?? null,
-      },
+      is_published: isPublished,
+      scores: showScores
+        ? {
+            task_progress_score: review?.task_progress_score ?? null,
+            commit_contribution_score:
+              review?.commit_contribution_score ?? null,
+            review_milestone_score: review?.review_milestone_score ?? null,
+            total_score: review ? Number(totalScore.toFixed(2)) : null,
+          }
+        : {
+            task_progress_score: null,
+            commit_contribution_score: null,
+            review_milestone_score: null,
+            total_score: null,
+          },
+      lecturer_note: showScores ? (review?.lecturer_note ?? null) : null,
+      snapshot: showScores
+        ? {
+            task_total: review?.snapshot_task_total ?? 0,
+            task_done: review?.snapshot_task_done ?? 0,
+            commit_total: review?.snapshot_commit_total ?? null,
+            commit_contributors: review?.snapshot_commit_contributors ?? null,
+            repository: review?.snapshot_repository ?? null,
+            captured_at: review?.snapshot_captured_at ?? null,
+          }
+        : {
+            task_total: 0,
+            task_done: 0,
+            commit_total: null,
+            commit_contributors: null,
+            repository: null,
+            captured_at: null,
+          },
       warnings,
       milestone: milestone,
     };
