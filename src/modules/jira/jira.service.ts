@@ -509,7 +509,7 @@ export class JiraService {
       async ({ accessToken, cloudId }) => {
         const response = await lastValueFrom(
           this.httpService.get<JiraIssueSearchResponse>(
-            `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/search`,
+            `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/search/jql`,
             {
               headers: {
                 Authorization: `Bearer ${accessToken}`,
