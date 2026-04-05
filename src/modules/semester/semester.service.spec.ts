@@ -728,7 +728,7 @@ describe('SemesterService', () => {
       Role.LECTURER,
     );
 
-    expect(result.milestone?.code).toBe(ReviewMilestoneCode.REVIEW_3);
+    expect(result.classes[0].active_checkpoint?.code).toBe(ReviewMilestoneCode.REVIEW_3);
     expect(result.summary.groups_missing_task_evidence).toBe(1);
     expect(result.summary.groups_missing_commit_evidence).toBe(1);
     expect(result.classes[0].groups[0].warnings).toEqual(
@@ -783,7 +783,7 @@ describe('SemesterService', () => {
 
     const result = await service.getStudentReviewStatus('student-1');
 
-    expect(result.milestone?.code).toBe(ReviewMilestoneCode.REVIEW_1);
+    expect(result.groups[0].milestone?.code).toBe(ReviewMilestoneCode.REVIEW_1);
     expect(result.groups[0]).toMatchObject({
       class_id: 'class-1',
       group_id: 'group-1',

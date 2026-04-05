@@ -9,7 +9,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { TaskPriority, TaskStatus } from '../common/enums';
+import { TaskJiraSyncStatus, TaskPriority, TaskStatus } from '../common/enums';
 import { Group } from './group.entity';
 import { User } from './user.entity';
 
@@ -20,7 +20,7 @@ import { User } from './user.entity';
 @Index('IDX_TASK_GROUP_STATUS', ['group_id', 'status'])
 export class Task {
   @PrimaryGeneratedColumn('uuid')
-  id: string;
+  id!: string;
 
   @Column({ type: 'uuid' })
   group_id: string;
@@ -53,6 +53,16 @@ export class Task {
 
   @Column({ type: 'varchar', length: 50, nullable: true })
   jira_issue_id: string | null;
+
+  @Column({
+    type: 'enum',
+    enum: TaskJiraSyncStatus,
+    default: TaskJiraSyncStatus.SKIPPED,
+  })
+  jira_sync_status: TaskJiraSyncStatus;
+
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  jira_sync_reason: string | null;
 
   @Column({ type: 'timestamptz', nullable: true })
   due_at: Date | null;
