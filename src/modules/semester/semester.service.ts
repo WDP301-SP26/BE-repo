@@ -9,11 +9,15 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
-import { randomBytes } from 'crypto';
+import { randomBytes, randomUUID } from 'crypto';
 import { In, IsNull, Repository } from 'typeorm';
 import {
   AuthProvider,
   ReviewMilestoneCode,
+  ReviewProblemStatus,
+  ReviewScoringFormula,
+  ReviewSessionAuditAction,
+  ReviewSessionStatus,
   Role,
   SemesterStatus,
   TaskStatus,
@@ -29,6 +33,7 @@ import {
   GroupReview,
   ImportBatch,
   ImportRowLog,
+  ReviewSessionAuditLog,
   Semester,
   SemesterWeekAuditLog,
   Task,
@@ -40,7 +45,10 @@ import { ClassCheckpointService } from '../class/class-checkpoint.service';
 import { GithubService } from '../github/github.service';
 import { BulkExaminerAssignmentDto } from './dto/bulk-examiner-assignment.dto';
 import { BulkTeachingAssignmentDto } from './dto/bulk-teaching-assignment.dto';
-import { CreateReviewSessionDto } from './dto/create-review-session.dto';
+import {
+  CreateReviewSessionDto,
+  ReviewSessionProblemDto,
+} from './dto/create-review-session.dto';
 import { CreateSemesterClassDto } from './dto/create-semester-class.dto';
 import { CreateSemesterLecturerDto } from './dto/create-semester-lecturer.dto';
 import { CreateSemesterStudentDto } from './dto/create-semester-student.dto';
@@ -49,6 +57,7 @@ import { UpdateSemesterClassDto } from './dto/update-semester-class.dto';
 import { UpdateSemesterLecturerDto } from './dto/update-semester-lecturer.dto';
 import { UpdateSemesterStudentDto } from './dto/update-semester-student.dto';
 import { UpdateSemesterDto } from './dto/update-semester.dto';
+import { UpdateReviewSessionDto } from './dto/update-review-session.dto';
 import { UpsertGroupReviewDto } from './dto/upsert-group-review.dto';
 import { SemesterImportRow } from './utils/semester-import.util';
 
@@ -81,13 +90,9 @@ export interface ReviewMilestoneContext {
 }
 
 export interface ReviewSessionParticipantSummary {
-  user_id: string;
-  user_name: string | null;
-  present: boolean;
-  did_contribute: boolean;
-  contribution_summary: string | null;
-  completed_items: string[];
-  pending_items: string[];
+  id: string;
+  title: string;
+  status: ReviewProblemStatus;
   note: string | null;
 }
 
@@ -95,15 +100,45 @@ export interface ReviewSessionTimelineItem {
   id: string;
   title: string;
   review_date: string;
+  review_day: string;
   milestone_code: ReviewMilestoneCode;
   status: ReviewSessionStatusValue;
   lecturer_note: string | null;
-  participant_reports: ReviewSessionParticipantSummary[];
-  attendance: {
-    present_count: number;
-    absent_count: number;
-    contributor_count: number;
-  };
+  what_done_since_last_review: string | null;
+  next_plan_until_next_review: string | null;
+  previous_problem_followup: string | null;
+  attendance_ratio: number | null;
+  current_problems: ReviewSessionParticipantSummary[];
+  version_count?: number;
+  latest_action?: ReviewSessionAuditAction | null;
+}
+
+export interface ReviewSessionHistoryEntry {
+  id: string;
+  review_session_id: string | null;
+  action: ReviewSessionAuditAction;
+  version_number: number;
+  actor_user_id: string | null;
+  created_at: string;
+  milestone_code: ReviewMilestoneCode;
+  snapshot: Record<string, unknown>;
+}
+
+interface ReviewScoringMetrics {
+  total_problems: number;
+  resolved_ratio: number;
+  overdue_task_ratio: number;
+  attendance_ratio: number;
+}
+
+interface ReviewScoreComputation {
+  task_progress_score: number;
+  commit_contribution_score: number;
+  review_milestone_score: number;
+  auto_score: number;
+  final_score: number;
+  metrics: ReviewScoringMetrics;
+  config_snapshot: Record<string, unknown>;
 }
 
 export interface SerializedSemester {
@@ -154,6 +189,8 @@ export class SemesterService {
     private readonly groupReviewRepository: Repository<GroupReview>,
     @InjectRepository(ReviewSession)
     private readonly reviewSessionRepository: Repository<ReviewSession>,
+    @InjectRepository(ReviewSessionAuditLog)
+    private readonly reviewSessionAuditLogRepository: Repository<ReviewSessionAuditLog>,
     @InjectRepository(Task)
     private readonly taskRepository: Repository<Task>,
     @InjectRepository(SemesterWeekAuditLog)
@@ -819,18 +856,12 @@ export class SemesterService {
       throw new NotFoundException('No current semester is configured.');
     }
 
-    const group = await this.groupRepository.findOne({
-      where: { id: groupId },
-      relations: ['class', 'topic'],
-    });
-
-    if (!group) {
-      throw new NotFoundException('Group not found.');
-    }
-
-    if (!group.class_id) {
-      throw new BadRequestException('Group is not assigned to a class.');
-    }
+    const group = await this.getAccessibleGroupOrThrow(
+      groupId,
+      userId,
+      userRole,
+      'write',
+    );
 
     const milestone = await this.resolveClassCheckpoint(
       semester.id,
@@ -843,16 +874,16 @@ export class SemesterService {
       );
     }
 
-    if (
-      userRole !== Role.ADMIN &&
-      (!group.class || group.class.lecturer_id !== userId)
-    ) {
-      throw new ForbiddenException(
-        'You are not allowed to update review data for this group.',
-      );
-    }
-
     const snapshot = await this.captureReviewSnapshot(group);
+    const currentMilestoneSessions = await this.reviewSessionRepository.find({
+      where: {
+        semester_id: semester.id,
+        group_id: group.id,
+        milestone_code: milestone.code,
+        deleted_at: IsNull(),
+      },
+      order: { review_date: 'ASC', created_at: 'ASC' },
+    });
     const existingReview = await this.groupReviewRepository.findOne({
       where: {
         semester_id: semester.id,
@@ -861,6 +892,13 @@ export class SemesterService {
       },
     });
 
+    const scoring = this.computeCheckpointScores(
+      currentMilestoneSessions,
+      snapshot,
+      dto,
+      existingReview,
+    );
+
     const review = this.groupReviewRepository.create({
       id: existingReview?.id,
       semester_id: semester.id,
@@ -868,35 +906,26 @@ export class SemesterService {
       milestone_code: milestone.code,
       week_start: milestone.week_start,
       week_end: milestone.week_end,
-      task_progress_score:
-        dto.task_progress_score ??
-        existingReview?.task_progress_score ??
-        this.deriveTaskProgressScore(snapshot.task_done, snapshot.task_total),
-      commit_contribution_score:
-        dto.commit_contribution_score ??
-        existingReview?.commit_contribution_score ??
-        this.deriveCommitContributionScore(
-          snapshot.commit_total,
-          snapshot.commit_contributors,
-        ),
-      review_milestone_score:
-        dto.review_milestone_score ??
-        existingReview?.review_milestone_score ??
-        this.deriveReviewMilestoneScore(
-          dto.task_progress_score ??
-            existingReview?.task_progress_score ??
-            this.deriveTaskProgressScore(
-              snapshot.task_done,
-              snapshot.task_total,
-            ),
-          dto.commit_contribution_score ??
-            existingReview?.commit_contribution_score ??
-            this.deriveCommitContributionScore(
-              snapshot.commit_total,
-              snapshot.commit_contributors,
-            ),
-        ),
+      task_progress_score: scoring.task_progress_score,
+      commit_contribution_score: scoring.commit_contribution_score,
+      review_milestone_score: scoring.review_milestone_score,
       lecturer_note: dto.lecturer_note ?? existingReview?.lecturer_note ?? null,
+      auto_score: scoring.auto_score,
+      final_score: scoring.final_score,
+      override_reason:
+        dto.override_reason?.trim() ||
+        (scoring.final_score !== scoring.auto_score
+          ? existingReview?.override_reason || null
+          : null),
+      scoring_formula:
+        dto.scoring_formula ??
+        existingReview?.scoring_formula ??
+        ReviewScoringFormula.ATTENDANCE_PROBLEM_CONTRIBUTION,
+      scoring_config_snapshot: scoring.config_snapshot,
+      metric_total_problems: scoring.metrics.total_problems,
+      metric_resolved_ratio: scoring.metrics.resolved_ratio,
+      metric_overdue_task_ratio: scoring.metrics.overdue_task_ratio,
+      metric_attendance_ratio: scoring.metrics.attendance_ratio,
       snapshot_task_total: snapshot.task_total,
       snapshot_task_done: snapshot.task_done,
       snapshot_commit_total: snapshot.commit_total,
@@ -921,7 +950,13 @@ export class SemesterService {
     return {
       semester: this.serializeSemester(semester),
       milestone,
-      group: this.serializeReviewGroup(group, savedReview, milestone),
+      group: this.serializeReviewGroup(
+        group,
+        savedReview,
+        milestone,
+        false,
+        currentMilestoneSessions,
+      ),
     };
   }
 
@@ -937,85 +972,187 @@ export class SemesterService {
       throw new NotFoundException('No current semester is configured.');
     }
 
-    const group = await this.groupRepository.findOne({
-      where: { id: groupId },
-      relations: ['class'],
-    });
-
-    if (!group || !group.class_id || !group.class) {
-      throw new NotFoundException('Group not found.');
-    }
-
-    if (userRole !== Role.ADMIN && group.class.lecturer_id !== userId) {
-      throw new ForbiddenException(
-        'You are not allowed to create review sessions for this group.',
-      );
-    }
-
-    const classCheckpoints =
-      await this.classCheckpointService.ensureCheckpointsExist(
-        group.class_id,
-        semester.id,
-      );
-    const milestone = classCheckpoints.find(
-      (checkpoint) => checkpoint.milestone_code === dto.milestone_code,
+    const group = await this.getAccessibleGroupOrThrow(
+      groupId,
+      userId,
+      userRole,
+      'write',
     );
+    const reviewDay = this.toHoChiMinhReviewDay(dto.review_date);
+    const normalizedProblems = this.normalizeReviewProblems(dto.current_problems);
 
-    if (!milestone) {
-      throw new BadRequestException(
-        'Selected milestone is not configured for this class.',
-      );
-    }
-
-    const activeMembers = await this.groupMembershipRepository.find({
-      where: { group_id: group.id, left_at: IsNull() },
-      relations: ['user'],
-    });
-    const activeMemberMap = new Map(
-      activeMembers.map((member) => [member.user_id, member]),
+    await this.ensureMilestoneConfiguredForClass(
+      semester.id,
+      group.class_id,
+      dto.milestone_code,
     );
-
-    for (const participant of dto.participant_reports) {
-      if (!activeMemberMap.has(participant.user_id)) {
-        throw new BadRequestException(
-          `Participant ${participant.user_id} is not an active member of this group.`,
-        );
-      }
-    }
+    await this.ensureNoDuplicateReviewDay(group.id, reviewDay);
 
     const saved = await this.reviewSessionRepository.save(
       this.reviewSessionRepository.create({
         semester_id: semester.id,
         class_id: group.class_id,
         group_id: group.id,
+        review_day: reviewDay,
         milestone_code: dto.milestone_code,
         review_date: new Date(dto.review_date),
         title: dto.title.trim(),
+        status: dto.status ?? ReviewSessionStatus.COMPLETED,
         lecturer_note: dto.lecturer_note?.trim() || null,
-        participant_reports: dto.participant_reports.map((participant) => {
-          const activeMember = activeMemberMap.get(participant.user_id);
-          return {
-            user_id: participant.user_id,
-            user_name:
-              participant.user_name?.trim() ||
-              activeMember?.user?.full_name ||
-              activeMember?.user?.email ||
-              null,
-            present: participant.present,
-            did_contribute: participant.did_contribute,
-            contribution_summary:
-              participant.contribution_summary?.trim() || null,
-            completed_items: participant.completed_items || [],
-            pending_items: participant.pending_items || [],
-            note: participant.note?.trim() || null,
-          };
-        }),
+        what_done_since_last_review:
+          dto.what_done_since_last_review?.trim() || null,
+        next_plan_until_next_review:
+          dto.next_plan_until_next_review?.trim() || null,
+        previous_problem_followup:
+          dto.previous_problem_followup?.trim() || null,
+        current_problems: normalizedProblems,
+        attendance_ratio:
+          dto.attendance_ratio !== undefined
+            ? Number(dto.attendance_ratio.toFixed(2))
+            : null,
         created_by_id: userId,
         updated_by_id: userId,
       }),
     );
 
+    await this.recordReviewSessionAudit(
+      ReviewSessionAuditAction.CREATED,
+      saved,
+      userId,
+    );
+
     return this.serializeReviewSession(saved);
+  }
+
+  async updateReviewSession(
+    groupId: string,
+    sessionId: string,
+    userId: string,
+    userRole: Role,
+    dto: UpdateReviewSessionDto,
+  ) {
+    const semester = await this.getCurrentSemester();
+    if (!semester) {
+      throw new NotFoundException('No current semester is configured.');
+    }
+
+    const group = await this.getAccessibleGroupOrThrow(
+      groupId,
+      userId,
+      userRole,
+      'write',
+    );
+    const session = await this.reviewSessionRepository.findOne({
+      where: {
+        id: sessionId,
+        group_id: group.id,
+        semester_id: semester.id,
+        deleted_at: IsNull(),
+      },
+    });
+
+    if (!session) {
+      throw new NotFoundException('Review session not found.');
+    }
+
+    if (dto.milestone_code) {
+      await this.ensureMilestoneConfiguredForClass(
+        semester.id,
+        group.class_id,
+        dto.milestone_code,
+      );
+      session.milestone_code = dto.milestone_code;
+    }
+
+    if (dto.review_date) {
+      session.review_date = new Date(dto.review_date);
+      session.review_day = this.toHoChiMinhReviewDay(dto.review_date);
+      await this.ensureNoDuplicateReviewDay(group.id, session.review_day, session.id);
+    }
+
+    if (dto.title !== undefined) {
+      session.title = dto.title.trim();
+    }
+    if (dto.status !== undefined) {
+      session.status = dto.status;
+    }
+    if (dto.lecturer_note !== undefined) {
+      session.lecturer_note = dto.lecturer_note?.trim() || null;
+    }
+    if (dto.what_done_since_last_review !== undefined) {
+      session.what_done_since_last_review =
+        dto.what_done_since_last_review?.trim() || null;
+    }
+    if (dto.next_plan_until_next_review !== undefined) {
+      session.next_plan_until_next_review =
+        dto.next_plan_until_next_review?.trim() || null;
+    }
+    if (dto.previous_problem_followup !== undefined) {
+      session.previous_problem_followup =
+        dto.previous_problem_followup?.trim() || null;
+    }
+    if (dto.current_problems !== undefined) {
+      session.current_problems = this.normalizeReviewProblems(dto.current_problems);
+    }
+    if (dto.attendance_ratio !== undefined) {
+      session.attendance_ratio =
+        dto.attendance_ratio !== null
+          ? Number(dto.attendance_ratio.toFixed(2))
+          : null;
+    }
+
+    session.updated_by_id = userId;
+
+    const saved = await this.reviewSessionRepository.save(session);
+    await this.recordReviewSessionAudit(
+      ReviewSessionAuditAction.UPDATED,
+      saved,
+      userId,
+    );
+
+    return this.serializeReviewSession(saved);
+  }
+
+  async deleteReviewSession(
+    groupId: string,
+    sessionId: string,
+    userId: string,
+    userRole: Role,
+  ) {
+    const semester = await this.getCurrentSemester();
+    if (!semester) {
+      throw new NotFoundException('No current semester is configured.');
+    }
+
+    const group = await this.getAccessibleGroupOrThrow(
+      groupId,
+      userId,
+      userRole,
+      'write',
+    );
+    const session = await this.reviewSessionRepository.findOne({
+      where: {
+        id: sessionId,
+        group_id: group.id,
+        semester_id: semester.id,
+        deleted_at: IsNull(),
+      },
+    });
+
+    if (!session) {
+      throw new NotFoundException('Review session not found.');
+    }
+
+    session.deleted_at = new Date();
+    session.updated_by_id = userId;
+    const saved = await this.reviewSessionRepository.save(session);
+    await this.recordReviewSessionAudit(
+      ReviewSessionAuditAction.DELETED,
+      saved,
+      userId,
+    );
+
+    return { deleted: true };
   }
 
   async listReviewSessions(userId: string, userRole: Role, classId?: string) {
@@ -1038,6 +1175,7 @@ export class SemesterService {
             where: {
               semester_id: semester.id,
               class_id: In(visibleClasses.map((targetClass) => targetClass.id)),
+              deleted_at: IsNull(),
             },
             order: { review_date: 'ASC', created_at: 'ASC' },
           })
@@ -1067,25 +1205,18 @@ export class SemesterService {
       return { semester: null, group: null, sessions: [] };
     }
 
-    const group = await this.groupRepository.findOne({
-      where: { id: groupId },
-      relations: ['class'],
-    });
-
-    if (!group || !group.class) {
-      throw new NotFoundException('Group not found.');
-    }
-
-    if (userRole !== Role.ADMIN && group.class.lecturer_id !== userId) {
-      throw new ForbiddenException(
-        'You are not allowed to view review sessions for this group.',
-      );
-    }
+    const group = await this.getAccessibleGroupOrThrow(
+      groupId,
+      userId,
+      userRole,
+      'read',
+    );
 
     const sessions = await this.reviewSessionRepository.find({
       where: {
         semester_id: semester.id,
         group_id: group.id,
+        deleted_at: IsNull(),
       },
       order: { review_date: 'ASC', created_at: 'ASC' },
     });
@@ -1096,9 +1227,37 @@ export class SemesterService {
         group_id: group.id,
         group_name: group.name,
         class_id: group.class_id,
-        class_code: group.class.code,
+        class_code: group.class?.code ?? '',
       },
       sessions: sessions.map((session) => this.serializeReviewSession(session)),
+    };
+  }
+
+  async listGroupReviewSessionHistory(
+    groupId: string,
+    userId: string,
+    userRole: Role,
+    milestoneCode?: ReviewMilestoneCode,
+  ) {
+    const semester = await this.getCurrentSemester();
+    if (!semester) {
+      return { semester: null, history: [] };
+    }
+
+    await this.getAccessibleGroupOrThrow(groupId, userId, userRole, 'read');
+
+    const history = await this.reviewSessionAuditLogRepository.find({
+      where: {
+        semester_id: semester.id,
+        group_id: groupId,
+        ...(milestoneCode ? { milestone_code: milestoneCode } : {}),
+      },
+      order: { created_at: 'DESC' },
+    });
+
+    return {
+      semester: this.serializeSemester(semester),
+      history: history.map((item) => this.serializeReviewSessionHistory(item)),
     };
   }
 
@@ -1146,6 +1305,10 @@ export class SemesterService {
         classMilestone,
         [group.id],
       );
+      const reviewSessionMap = await this.getReviewSessionMapForGroups(
+        semester.id,
+        [group.id],
+      );
 
       groupResults.push({
         class_id: group.class_id,
@@ -1156,6 +1319,7 @@ export class SemesterService {
           reviewMap.get(group.id),
           classMilestone,
           true,
+          reviewSessionMap.get(group.id) || [],
         ),
       });
     }
@@ -2701,6 +2865,7 @@ export class SemesterService {
       where: {
         semester_id: semesterId,
         group_id: In(groupIds),
+        deleted_at: IsNull(),
       },
       order: { review_date: 'ASC', created_at: 'ASC' },
     });
@@ -2728,11 +2893,7 @@ export class SemesterService {
     const isPublished = review?.is_published ?? false;
     const showScores = !forStudent || isPublished;
     const reviewStatus: ReviewMilestoneStatus = review ? 'REVIEWED' : 'PENDING';
-    const totalScore = this.computeAverageScore(
-      review?.task_progress_score,
-      review?.commit_contribution_score,
-      review?.review_milestone_score,
-    );
+    const totalScore = review?.final_score ?? review?.auto_score ?? null;
 
     return {
       group_id: group.id,
@@ -2746,15 +2907,42 @@ export class SemesterService {
             commit_contribution_score:
               review?.commit_contribution_score ?? null,
             review_milestone_score: review?.review_milestone_score ?? null,
-            total_score: review ? totalScore : null,
+            total_score: totalScore,
+            auto_score: review?.auto_score ?? null,
+            final_score: review?.final_score ?? null,
+            override_reason: review?.override_reason ?? null,
           }
         : {
             task_progress_score: null,
             commit_contribution_score: null,
             review_milestone_score: null,
             total_score: null,
+            auto_score: null,
+            final_score: null,
+            override_reason: null,
           },
       lecturer_note: showScores ? (review?.lecturer_note ?? null) : null,
+      scoring: showScores
+        ? {
+            formula: review?.scoring_formula ?? null,
+            config_snapshot: review?.scoring_config_snapshot ?? null,
+            metrics: {
+              total_problems: review?.metric_total_problems ?? 0,
+              resolved_ratio: review?.metric_resolved_ratio ?? null,
+              overdue_task_ratio: review?.metric_overdue_task_ratio ?? null,
+              attendance_ratio: review?.metric_attendance_ratio ?? null,
+            },
+          }
+        : {
+            formula: null,
+            config_snapshot: null,
+            metrics: {
+              total_problems: 0,
+              resolved_ratio: null,
+              overdue_task_ratio: null,
+              attendance_ratio: null,
+            },
+          },
       snapshot: showScores
         ? {
             task_total: review?.snapshot_task_total ?? 0,
@@ -2774,66 +2962,72 @@ export class SemesterService {
           },
       warnings,
       milestone: milestone,
-      review_sessions: forStudent
-        ? []
-        : reviewSessions.map((session) => this.serializeReviewSession(session)),
-      review_session_summary: forStudent
-        ? null
-        : this.buildReviewSessionAggregate(reviewSessions),
+      review_sessions: reviewSessions.map((session) =>
+        this.serializeReviewSession(session),
+      ),
+      review_session_summary: this.buildReviewSessionAggregate(reviewSessions),
     };
   }
 
   private serializeReviewSession(
     session: ReviewSession,
   ): ReviewSessionTimelineItem {
-    const participantReports =
-      (session.participant_reports as ReviewSessionParticipantSummary[]) || [];
-    const presentCount = participantReports.filter(
-      (report) => report.present,
-    ).length;
-    const absentCount = participantReports.filter(
-      (report) => !report.present,
-    ).length;
-    const contributorCount = new Set(
-      participantReports
-        .filter((report) => report.did_contribute)
-        .map((report) => report.user_id),
-    ).size;
+    const problems = (session.current_problems || []) as {
+      id: string;
+      title: string;
+      status: ReviewProblemStatus;
+      note: string | null;
+    }[];
 
     return {
       id: session.id,
       title: session.title,
       review_date: session.review_date.toISOString(),
+      review_day: session.review_day,
       milestone_code: session.milestone_code,
       status: session.status as ReviewSessionStatusValue,
       lecturer_note: session.lecturer_note,
-      participant_reports: participantReports,
-      attendance: {
-        present_count: presentCount,
-        absent_count: absentCount,
-        contributor_count: contributorCount,
-      },
+      what_done_since_last_review: session.what_done_since_last_review,
+      next_plan_until_next_review: session.next_plan_until_next_review,
+      previous_problem_followup: session.previous_problem_followup,
+      attendance_ratio:
+        session.attendance_ratio !== null && session.attendance_ratio !== undefined
+          ? Number(session.attendance_ratio)
+          : null,
+      current_problems: problems.map((problem) => ({
+        id: problem.id,
+        title: problem.title,
+        status: problem.status,
+        note: problem.note ?? null,
+      })),
     };
   }
 
   private buildReviewSessionAggregate(reviewSessions: ReviewSession[]) {
-    const participantReports = reviewSessions.flatMap((session) => {
+    const attendanceValues = reviewSessions
+      .map((session) =>
+        session.attendance_ratio !== null && session.attendance_ratio !== undefined
+          ? Number(session.attendance_ratio)
+          : null,
+      )
+      .filter((value): value is number => value !== null);
+    const presentCount = attendanceValues.reduce(
+      (sum, ratio) => sum + Math.round(ratio * 100),
+      0,
+    );
+    const absentCount = attendanceValues.reduce(
+      (sum, ratio) => sum + Math.round((1 - ratio) * 100),
+      0,
+    );
+    const contributorCount = reviewSessions.reduce((sum, session) => {
       return (
-        (session.participant_reports as ReviewSessionParticipantSummary[]) || []
+        sum +
+        ((session.current_problems || []) as {
+          status: ReviewProblemStatus;
+        }[]).filter((problem) => problem.status === ReviewProblemStatus.DONE)
+          .length
       );
-    });
-
-    const presentCount = participantReports.filter(
-      (report) => report.present,
-    ).length;
-    const absentCount = participantReports.filter(
-      (report) => !report.present,
-    ).length;
-    const contributorCount = new Set(
-      participantReports
-        .filter((report) => report.did_contribute)
-        .map((report) => report.user_id),
-    ).size;
+    }, 0);
 
     const latestSession = reviewSessions[reviewSessions.length - 1];
 
@@ -2844,6 +3038,21 @@ export class SemesterService {
       contributor_count: contributorCount,
       latest_review_date: latestSession?.review_date?.toISOString() || null,
       latest_note: latestSession?.lecturer_note || null,
+    };
+  }
+
+  private serializeReviewSessionHistory(
+    auditLog: ReviewSessionAuditLog,
+  ): ReviewSessionHistoryEntry {
+    return {
+      id: auditLog.id,
+      review_session_id: auditLog.review_session_id,
+      action: auditLog.action,
+      version_number: auditLog.version_number,
+      actor_user_id: auditLog.actor_user_id,
+      created_at: auditLog.created_at.toISOString(),
+      milestone_code: auditLog.milestone_code,
+      snapshot: auditLog.snapshot,
     };
   }
 
@@ -2872,6 +3081,353 @@ export class SemesterService {
     }
 
     return visibleClasses;
+  }
+
+  private async getAccessibleGroupOrThrow(
+    groupId: string,
+    userId: string,
+    userRole: Role,
+    intent: 'read' | 'write',
+  ) {
+    const group = await this.groupRepository.findOne({
+      where: { id: groupId },
+      relations: ['class', 'topic'],
+    });
+
+    if (!group || !group.class_id || !group.class) {
+      throw new NotFoundException('Group not found.');
+    }
+
+    if (userRole === Role.ADMIN) {
+      return group;
+    }
+
+    if (userRole === Role.LECTURER) {
+      if (group.class.lecturer_id !== userId) {
+        throw new ForbiddenException(
+          `You are not allowed to ${intent} review data for this group.`,
+        );
+      }
+      return group;
+    }
+
+    const membership = await this.groupMembershipRepository.findOne({
+      where: {
+        group_id: groupId,
+        user_id: userId,
+        left_at: IsNull(),
+      },
+    });
+
+    if (!membership) {
+      throw new ForbiddenException(
+        `You are not allowed to ${intent} review data for this group.`,
+      );
+    }
+
+    if (intent === 'write') {
+      throw new ForbiddenException(
+        'Students can only view review sessions and scores.',
+      );
+    }
+
+    return group;
+  }
+
+  private async ensureMilestoneConfiguredForClass(
+    semesterId: string,
+    classId: string,
+    milestoneCode: ReviewMilestoneCode,
+  ) {
+    const classCheckpoints =
+      await this.classCheckpointService.ensureCheckpointsExist(classId, semesterId);
+    const milestone = classCheckpoints.find(
+      (checkpoint) => checkpoint.milestone_code === milestoneCode,
+    );
+
+    if (!milestone && milestoneCode !== ReviewMilestoneCode.FINAL_SCORE) {
+      throw new BadRequestException(
+        'Selected milestone is not configured for this class.',
+      );
+    }
+  }
+
+  private async ensureNoDuplicateReviewDay(
+    groupId: string,
+    reviewDay: string,
+    excludeSessionId?: string,
+  ) {
+    const existing = await this.reviewSessionRepository.findOne({
+      where: {
+        group_id: groupId,
+        review_day: reviewDay,
+        deleted_at: IsNull(),
+      },
+    });
+
+    if (existing && existing.id !== excludeSessionId) {
+      throw new ConflictException(
+        'Only one review session per group is allowed on the same review day.',
+      );
+    }
+  }
+
+  private toHoChiMinhReviewDay(reviewDate: string | Date) {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date(reviewDate));
+  }
+
+  private normalizeReviewProblems(
+    problems: ReviewSessionProblemDto[] | undefined,
+  ): Array<{
+    id: string;
+    title: string;
+    status: ReviewProblemStatus;
+    note: string | null;
+  }> {
+    return (problems || []).map((problem) => {
+      const title = problem.title.trim();
+      const note = problem.note?.trim() || null;
+
+      if (!title) {
+        throw new BadRequestException('Problem title is required.');
+      }
+
+      if (problem.status === ReviewProblemStatus.NOT_DONE && !note) {
+        throw new BadRequestException(
+          'A note is required when a problem remains not-done.',
+        );
+      }
+
+      return {
+        id: problem.id?.trim() || randomUUID(),
+        title,
+        status: problem.status,
+        note,
+      };
+    });
+  }
+
+  private async recordReviewSessionAudit(
+    action: ReviewSessionAuditAction,
+    session: ReviewSession,
+    actorUserId: string,
+  ) {
+    const version_number = await this.getNextReviewSessionVersion(session.id);
+
+    await this.reviewSessionAuditLogRepository.save(
+      this.reviewSessionAuditLogRepository.create({
+        review_session_id: session.id,
+        semester_id: session.semester_id,
+        group_id: session.group_id,
+        milestone_code: session.milestone_code,
+        action,
+        version_number,
+        actor_user_id: actorUserId,
+        snapshot: this.buildReviewSessionSnapshot(session),
+      }),
+    );
+  }
+
+  private async getNextReviewSessionVersion(reviewSessionId: string) {
+    const latest = await this.reviewSessionAuditLogRepository.findOne({
+      where: { review_session_id: reviewSessionId },
+      order: { version_number: 'DESC' },
+    });
+
+    return (latest?.version_number ?? 0) + 1;
+  }
+
+  private buildReviewSessionSnapshot(session: ReviewSession) {
+    return {
+      id: session.id,
+      semester_id: session.semester_id,
+      class_id: session.class_id,
+      group_id: session.group_id,
+      review_day: session.review_day,
+      review_date: session.review_date.toISOString(),
+      milestone_code: session.milestone_code,
+      title: session.title,
+      status: session.status,
+      lecturer_note: session.lecturer_note,
+      what_done_since_last_review: session.what_done_since_last_review,
+      next_plan_until_next_review: session.next_plan_until_next_review,
+      previous_problem_followup: session.previous_problem_followup,
+      current_problems: session.current_problems,
+      attendance_ratio:
+        session.attendance_ratio !== null && session.attendance_ratio !== undefined
+          ? Number(session.attendance_ratio)
+          : null,
+      deleted_at: session.deleted_at?.toISOString() ?? null,
+      updated_by_id: session.updated_by_id,
+    };
+  }
+
+  private computeCheckpointScores(
+    reviewSessions: ReviewSession[],
+    snapshot: Awaited<ReturnType<SemesterService['captureReviewSnapshot']>>,
+    dto: UpsertGroupReviewDto,
+    existingReview?: GroupReview | null,
+  ): ReviewScoreComputation {
+    const metrics = this.computeReviewMetrics(reviewSessions, snapshot);
+    const taskProgressScore =
+      dto.task_progress_score ??
+      existingReview?.task_progress_score ??
+      Number(((1 - metrics.overdue_task_ratio) * 10).toFixed(2));
+    const commitContributionScore =
+      dto.commit_contribution_score ??
+      existingReview?.commit_contribution_score ??
+      this.deriveCommitContributionScore(
+        snapshot.commit_total,
+        snapshot.commit_contributors,
+      );
+    const reviewMilestoneScore =
+      dto.review_milestone_score ??
+      existingReview?.review_milestone_score ??
+      Number((metrics.resolved_ratio * 10).toFixed(2));
+
+    const scoringFormula =
+      dto.scoring_formula ??
+      existingReview?.scoring_formula ??
+      ReviewScoringFormula.ATTENDANCE_PROBLEM_CONTRIBUTION;
+    const selectedMetrics = dto.selected_metrics?.length
+      ? dto.selected_metrics
+      : Array.isArray(existingReview?.scoring_config_snapshot?.selected_metrics)
+        ? (existingReview?.scoring_config_snapshot?.selected_metrics as string[])
+        : [];
+
+    const scoredMetricMap: Record<string, number> = {
+      ATTENDANCE: Number((metrics.attendance_ratio * 10).toFixed(2)),
+      PROBLEM_RESOLUTION: Number((metrics.resolved_ratio * 10).toFixed(2)),
+      CONTRIBUTION: commitContributionScore,
+      TASK_DISCIPLINE: taskProgressScore,
+    };
+
+    const autoScore = this.calculateAutoScore(
+      scoringFormula,
+      selectedMetrics,
+      scoredMetricMap,
+    );
+    const requestedFinalScore =
+      dto.final_score ?? existingReview?.final_score ?? autoScore;
+    const finalScore = Number(requestedFinalScore.toFixed(2));
+    const overrideReason = dto.override_reason?.trim() || null;
+
+    if (finalScore !== autoScore && !overrideReason) {
+      throw new BadRequestException(
+        'Override reason is required when the final score differs from the auto score.',
+      );
+    }
+
+    return {
+      task_progress_score: taskProgressScore,
+      commit_contribution_score: commitContributionScore,
+      review_milestone_score: reviewMilestoneScore,
+      auto_score: autoScore,
+      final_score: finalScore,
+      metrics,
+      config_snapshot: {
+        formula: scoringFormula,
+        selected_metrics: selectedMetrics,
+        scored_metrics: scoredMetricMap,
+      },
+    };
+  }
+
+  private computeReviewMetrics(
+    reviewSessions: ReviewSession[],
+    snapshot: Awaited<ReturnType<SemesterService['captureReviewSnapshot']>>,
+  ): ReviewScoringMetrics {
+    const problems = reviewSessions.flatMap(
+      (session) =>
+        (session.current_problems || []) as Array<{
+          status: ReviewProblemStatus;
+        }>,
+    );
+    const totalProblems = problems.length;
+    const resolvedProblems = problems.filter(
+      (problem) =>
+        problem.status === ReviewProblemStatus.DONE ||
+        problem.status === ReviewProblemStatus.ARCHIVED,
+    ).length;
+    const attendanceRatios = reviewSessions
+      .map((session) =>
+        session.attendance_ratio !== null && session.attendance_ratio !== undefined
+          ? Number(session.attendance_ratio)
+          : null,
+      )
+      .filter((value): value is number => value !== null);
+
+    return {
+      total_problems: totalProblems,
+      resolved_ratio:
+        totalProblems > 0
+          ? Number((resolvedProblems / totalProblems).toFixed(2))
+          : 1,
+      overdue_task_ratio:
+        snapshot.task_total > 0
+          ? Number((snapshot.overdue_task_total / snapshot.task_total).toFixed(2))
+          : 0,
+      attendance_ratio:
+        attendanceRatios.length > 0
+          ? Number(
+              (
+                attendanceRatios.reduce((sum, ratio) => sum + ratio, 0) /
+                attendanceRatios.length
+              ).toFixed(2),
+            )
+          : 0,
+    };
+  }
+
+  private calculateAutoScore(
+    formula: ReviewScoringFormula,
+    selectedMetrics: string[],
+    scoredMetricMap: Record<string, number>,
+  ) {
+    const average = (values: number[]) =>
+      values.length > 0
+        ? Number(
+            (
+              values.reduce((sum, value) => sum + value, 0) / values.length
+            ).toFixed(2),
+          )
+        : 0;
+
+    if (formula === ReviewScoringFormula.ATTENDANCE_ONLY) {
+      return scoredMetricMap.ATTENDANCE;
+    }
+
+    if (formula === ReviewScoringFormula.PROBLEM_RESOLUTION_CONTRIBUTION) {
+      return average([
+        scoredMetricMap.PROBLEM_RESOLUTION,
+        scoredMetricMap.CONTRIBUTION,
+      ]);
+    }
+
+    if (formula === ReviewScoringFormula.CUSTOM_SELECTION) {
+      const picked = selectedMetrics
+        .map((key) => scoredMetricMap[key])
+        .filter((value): value is number => typeof value === 'number');
+
+      return picked.length > 0
+        ? average(picked)
+        : average([
+            scoredMetricMap.ATTENDANCE,
+            scoredMetricMap.PROBLEM_RESOLUTION,
+            scoredMetricMap.CONTRIBUTION,
+          ]);
+    }
+
+    return average([
+      scoredMetricMap.ATTENDANCE,
+      scoredMetricMap.PROBLEM_RESOLUTION,
+      scoredMetricMap.CONTRIBUTION,
+    ]);
   }
 
   private buildReviewWarnings(
@@ -2907,6 +3463,7 @@ export class SemesterService {
   private async captureReviewSnapshot(group: Pick<Group, 'id'>): Promise<{
     task_total: number;
     task_done: number;
+    overdue_task_total: number;
     commit_total: number | null;
     commit_contributors: number | null;
     repository: string | null;
@@ -2920,6 +3477,7 @@ export class SemesterService {
       select: {
         id: true,
         status: true,
+        due_at: true,
       },
     });
 
@@ -2967,6 +3525,12 @@ export class SemesterService {
     return {
       task_total: tasks.length,
       task_done: tasks.filter((task) => task.status === TaskStatus.DONE).length,
+      overdue_task_total: tasks.filter(
+        (task) =>
+          task.status !== TaskStatus.DONE &&
+          !!task.due_at &&
+          new Date(task.due_at).getTime() < Date.now(),
+      ).length,
       commit_total: commitTotal,
       commit_contributors: commitContributors,
       repository,

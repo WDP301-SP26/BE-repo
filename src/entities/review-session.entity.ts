@@ -1,27 +1,30 @@
 import {
   Column,
   CreateDateColumn,
+  DeleteDateColumn,
   Entity,
   Index,
   JoinColumn,
   ManyToOne,
+  OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { ReviewMilestoneCode, ReviewSessionStatus } from '../common/enums';
+import {
+  ReviewMilestoneCode,
+  ReviewProblemStatus,
+  ReviewSessionStatus,
+} from '../common/enums';
 import { Class } from './class.entity';
 import { Group } from './group.entity';
+import { ReviewSessionAuditLog } from './review-session-audit-log.entity';
 import { Semester } from './semester.entity';
 import { User } from './user.entity';
 
-export interface ReviewSessionParticipantReport {
-  user_id: string;
-  user_name: string | null;
-  present: boolean;
-  did_contribute: boolean;
-  contribution_summary: string | null;
-  completed_items: string[];
-  pending_items: string[];
+export interface ReviewSessionProblem {
+  id: string;
+  title: string;
+  status: ReviewProblemStatus;
   note: string | null;
 }
 
@@ -44,6 +47,9 @@ export class ReviewSession {
   @Column({ type: 'uuid' })
   group_id: string;
 
+  @Column({ type: 'date' })
+  review_day: string;
+
   @Column({ type: 'enum', enum: ReviewMilestoneCode })
   milestone_code: ReviewMilestoneCode;
 
@@ -63,8 +69,20 @@ export class ReviewSession {
   @Column({ type: 'text', nullable: true })
   lecturer_note: string | null;
 
+  @Column({ type: 'text', nullable: true })
+  what_done_since_last_review: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  next_plan_until_next_review: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  previous_problem_followup: string | null;
+
   @Column({ type: 'jsonb', default: () => "'[]'::jsonb" })
-  participant_reports: ReviewSessionParticipantReport[];
+  current_problems: ReviewSessionProblem[];
+
+  @Column({ type: 'numeric', precision: 5, scale: 2, nullable: true })
+  attendance_ratio: number | null;
 
   @Column({ type: 'uuid', nullable: true })
   created_by_id: string | null;
@@ -77,6 +95,9 @@ export class ReviewSession {
 
   @UpdateDateColumn({ type: 'timestamptz' })
   updated_at: Date;
+
+  @DeleteDateColumn({ type: 'timestamptz', nullable: true })
+  deleted_at: Date | null;
 
   @ManyToOne(() => Semester, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'semester_id' })
@@ -97,4 +118,7 @@ export class ReviewSession {
   @ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'updated_by_id' })
   updated_by: User | null;
+
+  @OneToMany(() => ReviewSessionAuditLog, (audit) => audit.review_session)
+  audit_logs: ReviewSessionAuditLog[];
 }

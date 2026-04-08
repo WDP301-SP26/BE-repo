@@ -24,6 +24,7 @@ export * from './message.entity';
 export * from './notification.entity';
 export * from './project-link.entity';
 export * from './review-session.entity';
+export * from './review-session-audit-log.entity';
 export * from './semester-week-audit-log.entity';
 export * from './semester.entity';
 export * from './task.entity';

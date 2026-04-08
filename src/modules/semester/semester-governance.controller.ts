@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseUUIDPipe,
@@ -17,7 +18,7 @@ import {
   ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
-import { Role } from '../../common/enums';
+import { ReviewMilestoneCode, Role } from '../../common/enums';
 import type { AuthorizedRequest } from '../auth/auth.controller';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -25,6 +26,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { CreateReviewSessionDto } from './dto/create-review-session.dto';
 import { PublishMilestoneReviewsDto } from './dto/publish-milestone-reviews.dto';
 import { SetCurrentWeekDto } from './dto/set-current-week.dto';
+import { UpdateReviewSessionDto } from './dto/update-review-session.dto';
 import { UpsertGroupReviewDto } from './dto/upsert-group-review.dto';
 import { SemesterService } from './semester.service';
 
@@ -149,7 +151,7 @@ export class SemesterGovernanceController {
   }
 
   @Get('groups/:groupId/review-sessions')
-  @Roles(Role.LECTURER, Role.ADMIN)
+  @Roles(Role.LECTURER, Role.ADMIN, Role.STUDENT, Role.GROUP_LEADER)
   @ApiOperation({ summary: 'Get review session timeline for a group' })
   async listGroupReviewSessions(
     @Param('groupId', ParseUUIDPipe) groupId: string,
@@ -159,6 +161,70 @@ export class SemesterGovernanceController {
       groupId,
       req.user.id,
       req.user.role as Role,
+    );
+  }
+
+  @Patch('groups/:groupId/review-sessions/:sessionId')
+  @Roles(Role.LECTURER, Role.ADMIN)
+  @ApiOperation({
+    summary:
+      'Update a review session for a group while preserving audit history',
+  })
+  async updateReviewSession(
+    @Param('groupId', ParseUUIDPipe) groupId: string,
+    @Param('sessionId', ParseUUIDPipe) sessionId: string,
+    @Req() req: AuthorizedRequest,
+    @Body() dto: UpdateReviewSessionDto,
+  ) {
+    return this.semesterService.updateReviewSession(
+      groupId,
+      sessionId,
+      req.user.id,
+      req.user.role as Role,
+      dto,
+    );
+  }
+
+  @Delete('groups/:groupId/review-sessions/:sessionId')
+  @Roles(Role.LECTURER, Role.ADMIN)
+  @ApiOperation({
+    summary:
+      'Soft delete a review session for a group while preserving audit history',
+  })
+  async deleteReviewSession(
+    @Param('groupId', ParseUUIDPipe) groupId: string,
+    @Param('sessionId', ParseUUIDPipe) sessionId: string,
+    @Req() req: AuthorizedRequest,
+  ) {
+    return this.semesterService.deleteReviewSession(
+      groupId,
+      sessionId,
+      req.user.id,
+      req.user.role as Role,
+    );
+  }
+
+  @Get('groups/:groupId/review-session-history')
+  @Roles(Role.LECTURER, Role.ADMIN, Role.STUDENT, Role.GROUP_LEADER)
+  @ApiOperation({
+    summary:
+      'Get audit/version history for review sessions of a group, optionally scoped to a milestone',
+  })
+  @ApiQuery({
+    name: 'milestone_code',
+    required: false,
+    description: 'Optional milestone code to filter history entries',
+  })
+  async listGroupReviewSessionHistory(
+    @Param('groupId', ParseUUIDPipe) groupId: string,
+    @Req() req: AuthorizedRequest,
+    @Query('milestone_code') milestoneCode?: string,
+  ) {
+    return this.semesterService.listGroupReviewSessionHistory(
+      groupId,
+      req.user.id,
+      req.user.role as Role,
+      milestoneCode as ReviewMilestoneCode | undefined,
     );
   }
 
