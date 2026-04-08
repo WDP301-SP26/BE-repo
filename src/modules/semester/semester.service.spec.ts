@@ -19,6 +19,7 @@ import {
   GroupReview,
   ImportBatch,
   ImportRowLog,
+  ReviewSession,
   Semester,
   SemesterWeekAuditLog,
   Task,
@@ -55,6 +56,7 @@ describe('SemesterService', () => {
   let groupMembershipRepo: ReturnType<typeof createMockRepository>;
   let groupRepoLinkRepo: ReturnType<typeof createMockRepository>;
   let groupReviewRepo: ReturnType<typeof createMockRepository>;
+  let reviewSessionRepo: ReturnType<typeof createMockRepository>;
   let taskRepo: ReturnType<typeof createMockRepository>;
   let weekAuditRepo: ReturnType<typeof createMockRepository>;
   let classCheckpointRepo: ReturnType<typeof createMockRepository>;
@@ -75,6 +77,7 @@ describe('SemesterService', () => {
     groupMembershipRepo = createMockRepository();
     groupRepoLinkRepo = createMockRepository();
     groupReviewRepo = createMockRepository();
+    reviewSessionRepo = createMockRepository();
     taskRepo = createMockRepository();
     weekAuditRepo = createMockRepository();
     classCheckpointRepo = createMockRepository();
@@ -144,6 +147,7 @@ describe('SemesterService', () => {
       id: entity.id ?? 'review-1',
       ...entity,
     }));
+    reviewSessionRepo.find.mockResolvedValue([]);
     configService.get.mockImplementation((key: string) => {
       switch (key) {
         case 'DEMO_WEEK_OVERRIDE_ENABLED':
@@ -187,6 +191,10 @@ describe('SemesterService', () => {
         {
           provide: getRepositoryToken(GroupReview),
           useValue: groupReviewRepo,
+        },
+        {
+          provide: getRepositoryToken(ReviewSession),
+          useValue: reviewSessionRepo,
         },
         { provide: getRepositoryToken(Task), useValue: taskRepo },
         {
@@ -679,7 +687,7 @@ describe('SemesterService', () => {
     expect(result.semester?.current_week).toBe(7);
     expect(result.milestone).toEqual({
       code: ReviewMilestoneCode.REVIEW_2,
-      label: 'Checkpoint 2',
+      label: 'Review 2',
       week_start: 4,
       week_end: 8,
     });
