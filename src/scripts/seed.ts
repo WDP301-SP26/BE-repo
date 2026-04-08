@@ -7,6 +7,7 @@ import {
   DocumentStatus,
   MembershipRole,
   ReviewMilestoneCode,
+  ReviewProblemStatus,
   ReviewSessionStatus,
   Role,
   SemesterStatus,
@@ -289,44 +290,32 @@ async function bootstrap() {
         continue;
       }
 
-      const participantReports = activeMembersWithUsers.map(
-        (membership, memberIndex) => {
-          const present = (groupIndex + memberIndex) % 4 !== 0;
-          const didContribute = present && memberIndex % 2 === 0;
-
-          return {
-            user_id: membership.user_id,
-            user_name:
-              membership.user?.full_name || membership.user?.email || null,
-            present,
-            did_contribute: didContribute,
-            contribution_summary: didContribute
-              ? `Worked on ${memberIndex % 2 === 0 ? 'task breakdown' : 'bug fixes'}.`
-              : null,
-            completed_items: didContribute
-              ? ['Reviewed backlog', 'Updated task board']
-              : [],
-            pending_items: didContribute
-              ? ['Final integration test']
-              : ['Need to confirm assignment'],
-            note: present
-              ? 'Present in review and participated in discussion.'
-              : 'Absent for this review session.',
-          };
-        },
-      );
-
       await reviewSessionRepository.save(
         reviewSessionRepository.create({
           semester_id: semester.id,
           class_id: demoClass.id,
           group_id: group.id,
+          review_day: sessionData.review_date.toISOString().slice(0, 10),
           milestone_code: ReviewMilestoneCode.REVIEW_1,
           review_date: sessionData.review_date,
           title: sessionData.title,
           status: ReviewSessionStatus.COMPLETED,
           lecturer_note: sessionData.lecturer_note,
-          participant_reports: participantReports,
+          what_done_since_last_review:
+            'Completed backlog cleanup and aligned Jira workflow with GitHub commits.',
+          next_plan_until_next_review:
+            'Finish integration checklist and stabilize the review demo script.',
+          previous_problem_followup:
+            'Previous missing permission issue was resolved before this review.',
+          current_problems: [
+            {
+              id: `problem-${group.id}`,
+              title: 'Final integration test is still unstable',
+              status: ReviewProblemStatus.NOT_DONE,
+              note: 'Need one more pass before checkpoint.',
+            },
+          ],
+          attendance_ratio: 0.75,
           created_by_id: lecturer.id,
           updated_by_id: lecturer.id,
         }),

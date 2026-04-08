@@ -1,65 +1,42 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
-  ArrayMinSize,
   IsArray,
-  IsBoolean,
   IsDateString,
   IsEnum,
+  IsNumber,
   IsOptional,
   IsString,
-  IsUUID,
+  Max,
   MaxLength,
+  Min,
   ValidateNested,
 } from 'class-validator';
 import {
   ReviewMilestoneCode,
+  ReviewProblemStatus,
   ReviewSessionStatus,
 } from '../../../common/enums';
 
-export class ReviewSessionParticipantReportDto {
-  @ApiProperty({ example: '11111111-1111-1111-1111-111111111111' })
-  @IsUUID('4')
-  user_id: string;
-
-  @ApiPropertyOptional({ example: 'Student 1' })
+export class ReviewSessionProblemDto {
+  @ApiPropertyOptional({ example: 'problem-api-timeout' })
   @IsOptional()
   @IsString()
-  @MaxLength(120)
-  user_name?: string;
-
-  @ApiProperty({ example: true })
-  @IsBoolean()
-  present: boolean;
-
-  @ApiProperty({ example: true })
-  @IsBoolean()
-  did_contribute: boolean;
-
+  @MaxLength(80)
+  id?: string;
+  @ApiProperty({ example: 'API timeout blocks issue sync' })
+  @IsString()
+  @MaxLength(255)
+  title: string;
+  @ApiProperty({ enum: ReviewProblemStatus })
+  @IsEnum(ReviewProblemStatus)
+  status: ReviewProblemStatus;
   @ApiPropertyOptional({
-    example: 'Implemented login flow and group dashboard.',
+    example: 'Still blocked by missing Jira permission. Required while status is not-done.',
   })
   @IsOptional()
   @IsString()
-  @MaxLength(500)
-  contribution_summary?: string;
-
-  @ApiPropertyOptional({ example: ['Created task list', 'Fixed API contract'] })
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  completed_items?: string[];
-
-  @ApiPropertyOptional({ example: ['Still need to finish validation'] })
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  pending_items?: string[];
-
-  @ApiPropertyOptional({ example: 'Needs follow-up on task ownership.' })
-  @IsOptional()
-  @IsString()
-  @MaxLength(500)
+  @MaxLength(1000)
   note?: string;
 }
 
@@ -90,10 +67,65 @@ export class CreateReviewSessionDto {
   @MaxLength(2000)
   lecturer_note?: string;
 
-  @ApiProperty({ type: [ReviewSessionParticipantReportDto] })
+  @ApiPropertyOptional({
+    example: 'Completed Jira integration hardening and task reassignment fixes.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(4000)
+  what_done_since_last_review?: string;
+
+  @ApiPropertyOptional({
+    example: 'Prepare final API demo and regression checklist before checkpoint.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(4000)
+  next_plan_until_next_review?: string;
+
+  @ApiPropertyOptional({
+    example: 'Previous permission issue was fixed, but deployment quota is still unstable.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(4000)
+  previous_problem_followup?: string;
+
+  @ApiPropertyOptional({
+    type: [ReviewSessionProblemDto],
+    example: [
+      {
+        id: 'problem-api-timeout',
+        title: 'API timeout blocks issue sync',
+        status: 'not-done',
+        note: 'Need infra support before the next checkpoint.',
+      },
+    ],
+  })
+  @IsOptional()
   @IsArray()
-  @ArrayMinSize(1)
   @ValidateNested({ each: true })
-  @Type(() => ReviewSessionParticipantReportDto)
-  participant_reports: ReviewSessionParticipantReportDto[];
+  @Type(() => ReviewSessionProblemDto)
+  current_problems?: ReviewSessionProblemDto[];
+
+  @ApiPropertyOptional({
+    example: 0.8,
+    description: 'Attendance ratio for the whole group, between 0 and 1.',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(1)
+  attendance_ratio?: number;
+
+  @ApiPropertyOptional({
+    type: 'array',
+    items: { type: 'object' },
+    default: [],
+    description:
+      'Legacy member-level participant reports. Kept optional for compatibility but not required by the new group-based review flow.',
+  })
+  @IsOptional()
+  @IsArray()
+  participant_reports?: Array<Record<string, unknown>>;
 }
