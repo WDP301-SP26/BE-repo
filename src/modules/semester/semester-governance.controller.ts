@@ -5,6 +5,7 @@ import {
   Param,
   ParseUUIDPipe,
   Patch,
+  Post,
   Query,
   Req,
   UseGuards,
@@ -21,6 +22,7 @@ import type { AuthorizedRequest } from '../auth/auth.controller';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { CreateReviewSessionDto } from './dto/create-review-session.dto';
 import { PublishMilestoneReviewsDto } from './dto/publish-milestone-reviews.dto';
 import { SetCurrentWeekDto } from './dto/set-current-week.dto';
 import { UpsertGroupReviewDto } from './dto/upsert-group-review.dto';
@@ -124,6 +126,42 @@ export class SemesterGovernanceController {
     );
   }
 
+  @Get('current/review-sessions')
+  @Roles(Role.LECTURER, Role.ADMIN)
+  @ApiOperation({
+    summary:
+      'Get review sessions for the current semester, optionally scoped to a class',
+  })
+  @ApiQuery({
+    name: 'classId',
+    required: false,
+    description: 'Optional class UUID to scope review sessions',
+  })
+  async listReviewSessions(
+    @Req() req: AuthorizedRequest,
+    @Query('classId') classId?: string,
+  ) {
+    return this.semesterService.listReviewSessions(
+      req.user.id,
+      req.user.role as Role,
+      classId,
+    );
+  }
+
+  @Get('groups/:groupId/review-sessions')
+  @Roles(Role.LECTURER, Role.ADMIN)
+  @ApiOperation({ summary: 'Get review session timeline for a group' })
+  async listGroupReviewSessions(
+    @Param('groupId', ParseUUIDPipe) groupId: string,
+    @Req() req: AuthorizedRequest,
+  ) {
+    return this.semesterService.listGroupReviewSessions(
+      groupId,
+      req.user.id,
+      req.user.role as Role,
+    );
+  }
+
   @Get('current/reviews/student-status')
   @Roles(Role.STUDENT, Role.GROUP_LEADER)
   @ApiOperation({
@@ -146,6 +184,25 @@ export class SemesterGovernanceController {
     @Body() dto: UpsertGroupReviewDto,
   ) {
     return this.semesterService.upsertCurrentGroupReview(
+      groupId,
+      req.user.id,
+      req.user.role as Role,
+      dto,
+    );
+  }
+
+  @Post('groups/:groupId/review-sessions')
+  @Roles(Role.LECTURER, Role.ADMIN)
+  @ApiOperation({
+    summary:
+      'Create a non-scored review session for a group to capture attendance and progress notes',
+  })
+  async createReviewSession(
+    @Param('groupId', ParseUUIDPipe) groupId: string,
+    @Req() req: AuthorizedRequest,
+    @Body() dto: CreateReviewSessionDto,
+  ) {
+    return this.semesterService.createReviewSession(
       groupId,
       req.user.id,
       req.user.role as Role,

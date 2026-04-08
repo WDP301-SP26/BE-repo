@@ -7,6 +7,7 @@ import {
   DocumentStatus,
   MembershipRole,
   ReviewMilestoneCode,
+  ReviewSessionStatus,
   Role,
   SemesterStatus,
   TaskJiraSyncStatus,
@@ -19,6 +20,7 @@ import { DocumentSubmission } from '../entities/document-submission.entity';
 import { GroupMembership } from '../entities/group-membership.entity';
 import { GroupReview } from '../entities/group-review.entity';
 import { Group } from '../entities/group.entity';
+import { ReviewSession } from '../entities/review-session.entity';
 import { Semester } from '../entities/semester.entity';
 import { Task } from '../entities/task.entity';
 import { Topic } from '../entities/topic.entity';
@@ -47,6 +49,7 @@ async function bootstrap() {
   const groupMembershipRepository = dataSource.getRepository(GroupMembership);
   const taskRepository = dataSource.getRepository(Task);
   const groupReviewRepository = dataSource.getRepository(GroupReview);
+  const reviewSessionRepository = dataSource.getRepository(ReviewSession);
   const documentSubmissionRepository =
     dataSource.getRepository(DocumentSubmission);
   const topicRepository = dataSource.getRepository(Topic);
@@ -242,11 +245,93 @@ async function bootstrap() {
       order: { joined_at: 'ASC' },
     });
 
+    const activeMembersWithUsers = await groupMembershipRepository.find({
+      where: {
+        group_id: group.id,
+        left_at: IsNull(),
+      },
+      relations: ['user'],
+      order: { joined_at: 'ASC' },
+    });
+
     const defaultAssigneeId = activeMembers[0]?.user_id || null;
     const groupLeaderId =
       activeMembers.find(
         (membership) => membership.role_in_group === MembershipRole.LEADER,
       )?.user_id || defaultAssigneeId;
+
+    const demoReviewSessions = [
+      {
+        title: `[${group.name}] Review day 1 - scope and task split`,
+        review_date: new Date('2026-01-15T09:00:00.000Z'),
+        lecturer_note:
+          'Reviewed task ownership, scope split, and blocker list for the group.',
+      },
+      {
+        title: `[${group.name}] Review day 2 - blocker follow-up`,
+        review_date: new Date('2026-01-22T09:00:00.000Z'),
+        lecturer_note:
+          'Tracked progress from the previous review and verified remaining blockers.',
+      },
+    ];
+
+    for (const sessionData of demoReviewSessions) {
+      const existingSession = await reviewSessionRepository.findOne({
+        where: {
+          semester_id: semester.id,
+          class_id: demoClass.id,
+          group_id: group.id,
+          title: sessionData.title,
+        },
+      });
+
+      if (existingSession) {
+        continue;
+      }
+
+      const participantReports = activeMembersWithUsers.map(
+        (membership, memberIndex) => {
+          const present = (groupIndex + memberIndex) % 4 !== 0;
+          const didContribute = present && memberIndex % 2 === 0;
+
+          return {
+            user_id: membership.user_id,
+            user_name:
+              membership.user?.full_name || membership.user?.email || null,
+            present,
+            did_contribute: didContribute,
+            contribution_summary: didContribute
+              ? `Worked on ${memberIndex % 2 === 0 ? 'task breakdown' : 'bug fixes'}.`
+              : null,
+            completed_items: didContribute
+              ? ['Reviewed backlog', 'Updated task board']
+              : [],
+            pending_items: didContribute
+              ? ['Final integration test']
+              : ['Need to confirm assignment'],
+            note: present
+              ? 'Present in review and participated in discussion.'
+              : 'Absent for this review session.',
+          };
+        },
+      );
+
+      await reviewSessionRepository.save(
+        reviewSessionRepository.create({
+          semester_id: semester.id,
+          class_id: demoClass.id,
+          group_id: group.id,
+          milestone_code: ReviewMilestoneCode.REVIEW_1,
+          review_date: sessionData.review_date,
+          title: sessionData.title,
+          status: ReviewSessionStatus.COMPLETED,
+          lecturer_note: sessionData.lecturer_note,
+          participant_reports: participantReports,
+          created_by_id: lecturer.id,
+          updated_by_id: lecturer.id,
+        }),
+      );
+    }
 
     const demoTasks = [
       {
