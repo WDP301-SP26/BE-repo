@@ -6,8 +6,11 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
 import { DocumentStatus, Role } from '../../common/enums';
+import { SemesterStatus } from '../../common/enums/semester-status.enum';
 import { DocumentSubmission } from '../../entities/document-submission.entity';
 import { GroupMembership } from '../../entities/group-membership.entity';
+import { Group } from '../../entities/group.entity';
+import { Semester } from '../../entities/semester.entity';
 import { CreateDocumentSubmissionDto } from './dto/create-submission.dto';
 import { GradeDocumentDto } from './dto/grade-submission.dto';
 import { UpdateDocumentSubmissionDto } from './dto/update-submission.dto';
@@ -26,6 +29,7 @@ export class DocumentSubmissionService {
     userId: string,
     dto: CreateDocumentSubmissionDto,
   ) {
+    await this.assertSemesterAllowsInteraction(groupId);
     return this.createSubmissionVersion(groupId, userId, dto, {
       status: DocumentStatus.PENDING,
     });
@@ -36,6 +40,7 @@ export class DocumentSubmissionService {
     userId: string,
     dto: CreateDocumentSubmissionDto,
   ) {
+    await this.assertSemesterAllowsInteraction(groupId);
     return this.createSubmissionVersion(groupId, userId, dto, {
       status: DocumentStatus.DRAFT,
     });
@@ -61,6 +66,8 @@ export class DocumentSubmissionService {
     if (!membership) {
       throw new ForbiddenException('You are not a member of this group');
     }
+
+    await this.assertSemesterAllowsInteraction(submission.group_id);
 
     submission.status = DocumentStatus.PENDING;
     return this.submissionRepo.save(submission);
@@ -90,6 +97,8 @@ export class DocumentSubmissionService {
     if (!membership) {
       throw new ForbiddenException('You are not a member of this group');
     }
+
+    await this.assertSemesterAllowsInteraction(submission.group_id);
 
     if (submission.status !== DocumentStatus.DRAFT) {
       throw new ForbiddenException('Only draft versions can be updated');
@@ -135,6 +144,8 @@ export class DocumentSubmissionService {
       throw new NotFoundException('Submission not found');
     }
 
+    await this.assertSemesterAllowsInteraction(submission.group_id);
+
     submission.status = dto.status;
     if (dto.score !== undefined) submission.score = dto.score;
     if (dto.feedback !== undefined) submission.feedback = dto.feedback;
@@ -163,6 +174,8 @@ export class DocumentSubmissionService {
     dto: CreateDocumentSubmissionDto,
     options: { status: DocumentStatus },
   ) {
+    await this.assertSemesterAllowsInteraction(groupId);
+
     const membership = await this.membershipRepo.findOne({
       where: { group_id: groupId, user_id: userId, left_at: IsNull() },
     });
@@ -191,5 +204,36 @@ export class DocumentSubmissionService {
     });
 
     return this.submissionRepo.save(submission);
+  }
+
+  private async assertSemesterAllowsInteraction(groupId: string) {
+    const manager = this.submissionRepo.manager as
+      | {
+          getRepository?: typeof this.submissionRepo.manager.getRepository;
+        }
+      | undefined;
+
+    if (!manager?.getRepository) {
+      return;
+    }
+
+    const group = await manager.getRepository(Group).findOne({
+      where: { id: groupId },
+      relations: ['class'],
+    });
+
+    if (!group?.class?.semester) {
+      return;
+    }
+
+    const semester = await manager
+      .getRepository(Semester)
+      .findOne({ where: { code: group.class.semester } });
+
+    if (semester?.status === SemesterStatus.UPCOMING) {
+      throw new ForbiddenException(
+        'This action is not available for UPCOMING semesters.',
+      );
+    }
   }
 }
