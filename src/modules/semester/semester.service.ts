@@ -57,11 +57,11 @@ import { CreateSemesterClassDto } from './dto/create-semester-class.dto';
 import { CreateSemesterLecturerDto } from './dto/create-semester-lecturer.dto';
 import { CreateSemesterStudentDto } from './dto/create-semester-student.dto';
 import { CreateSemesterDto } from './dto/create-semester.dto';
+import { UpdateReviewSessionDto } from './dto/update-review-session.dto';
 import { UpdateSemesterClassDto } from './dto/update-semester-class.dto';
 import { UpdateSemesterLecturerDto } from './dto/update-semester-lecturer.dto';
 import { UpdateSemesterStudentDto } from './dto/update-semester-student.dto';
 import { UpdateSemesterDto } from './dto/update-semester.dto';
-import { UpdateReviewSessionDto } from './dto/update-review-session.dto';
 import { UpsertGroupReviewDto } from './dto/upsert-group-review.dto';
 import { SemesterImportRow } from './utils/semester-import.util';
 
@@ -1096,7 +1096,11 @@ export class SemesterService {
     if (dto.review_date) {
       session.review_date = new Date(dto.review_date);
       session.review_day = this.toHoChiMinhReviewDay(dto.review_date);
-      await this.ensureNoDuplicateReviewDay(group.id, session.review_day, session.id);
+      await this.ensureNoDuplicateReviewDay(
+        group.id,
+        session.review_day,
+        session.id,
+      );
     }
 
     if (dto.title !== undefined) {
@@ -1121,7 +1125,9 @@ export class SemesterService {
         dto.previous_problem_followup?.trim() || null;
     }
     if (dto.current_problems !== undefined) {
-      session.current_problems = this.normalizeReviewProblems(dto.current_problems);
+      session.current_problems = this.normalizeReviewProblems(
+        dto.current_problems,
+      );
     }
     if (dto.attendance_records !== undefined) {
       const groupMembers = await this.getActiveGroupAttendanceMembers(group.id);
@@ -1133,7 +1139,10 @@ export class SemesterService {
         session.attendance_records,
       );
     }
-    if (dto.attendance_records === undefined && dto.attendance_ratio !== undefined) {
+    if (
+      dto.attendance_records === undefined &&
+      dto.attendance_ratio !== undefined
+    ) {
       session.attendance_ratio =
         dto.attendance_ratio !== null
           ? Number(dto.attendance_ratio.toFixed(2))
@@ -1422,7 +1431,7 @@ export class SemesterService {
   async getStudentPublishedScores(userId: string) {
     const semester = await this.getCurrentSemester();
     if (!semester) {
-      return { semester: null, milestones: [] };
+      return { semester: null, groups: [], milestones: [] };
     }
 
     // Get student's current groups in this semester
@@ -1439,95 +1448,109 @@ export class SemesterService {
       );
 
     if (currentGroups.length === 0) {
-      return { semester: this.serializeSemester(semester), milestones: [] };
+      return {
+        semester: this.serializeSemester(semester),
+        groups: [],
+        milestones: [],
+      };
     }
 
-    // Get ALL published reviews for these groups
+    // Get ALL published checkpoint reviews for these groups
     const publishedReviews = await this.groupReviewRepository.find({
       where: {
         semester_id: semester.id,
         group_id: In(currentGroups.map((g) => g.id)),
         is_published: true,
+        milestone_code: In([
+          ReviewMilestoneCode.REVIEW_1,
+          ReviewMilestoneCode.REVIEW_2,
+          ReviewMilestoneCode.REVIEW_3,
+        ]),
       },
       order: { week_start: 'ASC' },
     });
 
-    // Fetch checkpoint configs for all classes the student is in
-    // Key by "classId:milestoneCode" to avoid cross-class collisions
-    const classIds = [...new Set(currentGroups.map((g) => g.class_id))];
-    const allCheckpoints =
-      classIds.length > 0
-        ? await this.classCheckpointRepository.find({
-            where: {
-              class_id: In(classIds),
-              semester_id: semester.id,
-            },
-          })
-        : [];
-    const checkpointDescMap = new Map<string, string | null>();
-    for (const cp of allCheckpoints) {
-      checkpointDescMap.set(
-        `${cp.class_id}:${cp.milestone_code}`,
-        cp.description,
-      );
-    }
-
-    // Build a map from group_id to class_id for lookup
-    const groupClassMap = new Map(currentGroups.map((g) => [g.id, g.class_id]));
-
-    // Group by milestone
-    const milestoneMap = new Map<
+    const reviewsByGroup = new Map<
       string,
-      { milestone: ReviewMilestoneContext; groups: any[] }
+      Map<ReviewMilestoneCode, GroupReview>
     >();
-
     for (const review of publishedReviews) {
-      const key = review.milestone_code;
-      const groupClassId = groupClassMap.get(review.group_id);
-      const descKey = groupClassId
-        ? `${groupClassId}:${review.milestone_code}`
-        : review.milestone_code;
-
-      if (!milestoneMap.has(key)) {
-        milestoneMap.set(key, {
-          milestone: {
-            code: review.milestone_code,
-            label: this.getMilestoneLabel(review.milestone_code),
-            week_start: review.week_start,
-            week_end: review.week_end,
-            description: checkpointDescMap.get(descKey) ?? null,
-          },
-          groups: [],
-        });
-      }
-
-      const group = currentGroups.find((g) => g.id === review.group_id);
-      if (group) {
-        const totalScore = this.computeAverageScore(
-          review.task_progress_score,
-          review.commit_contribution_score,
-          review.review_milestone_score,
-        );
-
-        milestoneMap.get(key)!.groups.push({
-          group_id: group.id,
-          group_name: group.name,
-          topic_name: group.topic?.name || group.project_name || null,
-          scores: {
-            task_progress_score: review.task_progress_score,
-            commit_contribution_score: review.commit_contribution_score,
-            review_milestone_score: review.review_milestone_score,
-            total_score: totalScore,
-          },
-          lecturer_note: review.lecturer_note,
-        });
-      }
+      const groupMap =
+        reviewsByGroup.get(review.group_id) ||
+        new Map<ReviewMilestoneCode, GroupReview>();
+      groupMap.set(review.milestone_code, review);
+      reviewsByGroup.set(review.group_id, groupMap);
     }
+
+    const groups = currentGroups.map((group) => {
+      const checkpointMap = reviewsByGroup.get(group.id);
+      const cp1 = this.resolvePublishedCheckpointScore(
+        checkpointMap?.get(ReviewMilestoneCode.REVIEW_1),
+      );
+      const cp2 = this.resolvePublishedCheckpointScore(
+        checkpointMap?.get(ReviewMilestoneCode.REVIEW_2),
+      );
+      const cp3 = this.resolvePublishedCheckpointScore(
+        checkpointMap?.get(ReviewMilestoneCode.REVIEW_3),
+      );
+
+      return {
+        group_id: group.id,
+        group_name: group.name,
+        topic_name: group.topic?.name || group.project_name || null,
+        checkpoints: {
+          checkpoint_1: cp1,
+          checkpoint_2: cp2,
+          checkpoint_3: cp3,
+        },
+        total_score: this.computeCheckpointAverage(cp1, cp2, cp3),
+      };
+    });
 
     return {
       semester: this.serializeSemester(semester),
-      milestones: Array.from(milestoneMap.values()),
+      groups,
+      milestones: [],
     };
+  }
+
+  private resolvePublishedCheckpointScore(review?: GroupReview): number | null {
+    if (!review) {
+      return null;
+    }
+
+    const baseScore =
+      review.final_score ??
+      review.auto_score ??
+      this.computeAverageScore(
+        review.task_progress_score,
+        review.commit_contribution_score,
+        null,
+      );
+
+    if (baseScore === null || baseScore === undefined) {
+      return null;
+    }
+
+    return Number(Number(baseScore).toFixed(1));
+  }
+
+  private computeCheckpointAverage(
+    checkpoint1: number | null,
+    checkpoint2: number | null,
+    checkpoint3: number | null,
+  ): number | null {
+    const values = [checkpoint1, checkpoint2, checkpoint3].filter(
+      (score): score is number => score !== null,
+    );
+
+    if (values.length === 0) {
+      return null;
+    }
+
+    const average =
+      values.reduce((sum, score) => sum + score, 0) / values.length;
+    return Number(average.toFixed(1));
   }
 
   private getMilestoneLabel(code: ReviewMilestoneCode): string {
@@ -3059,16 +3082,23 @@ export class SemesterService {
 
   private buildReviewSessionAggregate(reviewSessions: ReviewSession[]) {
     const attendanceRecords = reviewSessions.flatMap(
-      (session) => (session.attendance_records || []) as ReviewSessionAttendanceRecord[],
+      (session) =>
+        (session.attendance_records || []) as ReviewSessionAttendanceRecord[],
     );
-    const presentCount = attendanceRecords.filter((record) => record.present).length;
-    const absentCount = attendanceRecords.filter((record) => !record.present).length;
+    const presentCount = attendanceRecords.filter(
+      (record) => record.present,
+    ).length;
+    const absentCount = attendanceRecords.filter(
+      (record) => !record.present,
+    ).length;
     const contributorCount = reviewSessions.reduce((sum, session) => {
       return (
         sum +
-        ((session.current_problems || []) as {
-          status: ReviewProblemStatus;
-        }[]).filter((problem) => problem.status === ReviewProblemStatus.DONE)
+        (
+          (session.current_problems || []) as {
+            status: ReviewProblemStatus;
+          }[]
+        ).filter((problem) => problem.status === ReviewProblemStatus.DONE)
           .length
       );
     }, 0);
@@ -3184,7 +3214,10 @@ export class SemesterService {
     milestoneCode: ReviewMilestoneCode,
   ) {
     const classCheckpoints =
-      await this.classCheckpointService.ensureCheckpointsExist(classId, semesterId);
+      await this.classCheckpointService.ensureCheckpointsExist(
+        classId,
+        semesterId,
+      );
     const milestone = classCheckpoints.find(
       (checkpoint) => checkpoint.milestone_code === milestoneCode,
     );
@@ -3273,18 +3306,19 @@ export class SemesterService {
   ) {
     const normalizedIncoming = this.normalizeReviewProblems(incomingProblems);
     const normalizedKeys = new Set(
-      normalizedIncoming.map((problem) =>
-        `${problem.id}:${problem.title.trim().toLowerCase()}`,
+      normalizedIncoming.map(
+        (problem) => `${problem.id}:${problem.title.trim().toLowerCase()}`,
       ),
     );
 
-    const carriedProblems = ((previousSession?.current_problems ||
-      []) as Array<{
-      id: string;
-      title: string;
-      status: ReviewProblemStatus;
-      note: string | null;
-    }>)
+    const carriedProblems = (
+      (previousSession?.current_problems || []) as Array<{
+        id: string;
+        title: string;
+        status: ReviewProblemStatus;
+        note: string | null;
+      }>
+    )
       .filter((problem) => problem.status === ReviewProblemStatus.NOT_DONE)
       .map((problem) => ({
         id: problem.id?.trim() || randomUUID(),
@@ -3349,7 +3383,8 @@ export class SemesterService {
       return this.calculateAttendanceRatio(records);
     }
 
-    return session.attendance_ratio !== null && session.attendance_ratio !== undefined
+    return session.attendance_ratio !== null &&
+      session.attendance_ratio !== undefined
       ? Number(session.attendance_ratio)
       : null;
   }
@@ -3469,7 +3504,8 @@ export class SemesterService {
     const selectedMetrics = dto.selected_metrics?.length
       ? dto.selected_metrics
       : Array.isArray(existingReview?.scoring_config_snapshot?.selected_metrics)
-        ? (existingReview?.scoring_config_snapshot?.selected_metrics as string[])
+        ? (existingReview?.scoring_config_snapshot
+            ?.selected_metrics as string[])
         : [];
 
     const scoredMetricMap: Record<string, number> = {
@@ -3538,7 +3574,9 @@ export class SemesterService {
           : 1,
       overdue_task_ratio:
         snapshot.task_total > 0
-          ? Number((snapshot.overdue_task_total / snapshot.task_total).toFixed(2))
+          ? Number(
+              (snapshot.overdue_task_total / snapshot.task_total).toFixed(2),
+            )
           : 0,
       attendance_ratio:
         attendanceRatios.length > 0
