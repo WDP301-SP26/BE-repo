@@ -17,6 +17,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { DocumentSubmissionService } from './document-submission.service';
 import { CreateDocumentSubmissionDto } from './dto/create-submission.dto';
 import { GradeDocumentDto } from './dto/grade-submission.dto';
+import { UpdateDocumentSubmissionDto } from './dto/update-submission.dto';
 
 @ApiTags('Document Submissions')
 @Controller('documents')
@@ -71,6 +72,18 @@ export class DocumentSubmissionController {
     @Param('id') submissionId: string,
   ) {
     return this.submissionService.submitVersion(submissionId, req.user.id);
+  }
+
+  @Patch(':id')
+  @ApiOperation({
+    summary: 'Update an existing draft version (group members only)',
+  })
+  async updateVersion(
+    @Req() req: AuthorizedRequest,
+    @Param('id') submissionId: string,
+    @Body() dto: UpdateDocumentSubmissionDto,
+  ) {
+    return this.submissionService.updateVersion(submissionId, req.user.id, dto);
   }
 
   @Patch(':id/grade')

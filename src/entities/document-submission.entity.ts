@@ -41,6 +41,9 @@ export class DocumentSubmission {
   @Column({ type: 'text', nullable: true })
   change_summary: string | null;
 
+  @Column({ type: 'text', nullable: true })
+  content_markdown: string | null;
+
   @Column({
     type: 'enum',
     enum: DocumentStatus,

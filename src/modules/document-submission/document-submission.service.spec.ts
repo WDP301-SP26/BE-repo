@@ -50,6 +50,7 @@ describe('DocumentSubmissionService', () => {
       title: 'SRS v3',
       reference: 'https://docs.example.com/v3',
       change_summary: 'Added FR and NFR updates',
+      content_markdown: '# SRS v3',
     });
 
     expect(submissionRepo.create).toHaveBeenCalledWith(
@@ -59,6 +60,7 @@ describe('DocumentSubmissionService', () => {
         version_number: 3,
         status: DocumentStatus.DRAFT,
         change_summary: 'Added FR and NFR updates',
+        content_markdown: '# SRS v3',
       }),
     );
     expect(result.status).toBe(DocumentStatus.DRAFT);
@@ -97,5 +99,48 @@ describe('DocumentSubmissionService', () => {
     await expect(service.submitVersion('missing', 'user-1')).rejects.toThrow(
       NotFoundException,
     );
+  });
+
+  it('updates an existing draft version in place', async () => {
+    submissionRepo.findOne.mockResolvedValue({
+      id: 'submission-1',
+      group_id: 'group-1',
+      title: 'SRS v1',
+      status: DocumentStatus.DRAFT,
+      reference: null,
+      document_url: null,
+      change_summary: null,
+      content_markdown: null,
+    });
+    membershipRepo.findOne.mockResolvedValue({ id: 'membership-1' });
+    submissionRepo.save.mockImplementation(async (value) => value);
+
+    const result = await service.updateVersion('submission-1', 'user-1', {
+      title: 'SRS v1 - revised',
+      reference: 'https://docs.example.com/revised',
+      change_summary: 'Refined scope',
+      content_markdown: '# Revised SRS',
+    });
+
+    expect(result.title).toBe('SRS v1 - revised');
+    expect(result.reference).toBe('https://docs.example.com/revised');
+    expect(result.document_url).toBe('https://docs.example.com/revised');
+    expect(result.change_summary).toBe('Refined scope');
+    expect(result.content_markdown).toBe('# Revised SRS');
+  });
+
+  it('rejects update for non-draft version', async () => {
+    submissionRepo.findOne.mockResolvedValue({
+      id: 'submission-1',
+      group_id: 'group-1',
+      status: DocumentStatus.PENDING,
+    });
+    membershipRepo.findOne.mockResolvedValue({ id: 'membership-1' });
+
+    await expect(
+      service.updateVersion('submission-1', 'user-1', {
+        title: 'cannot update',
+      }),
+    ).rejects.toThrow(ForbiddenException);
   });
 });

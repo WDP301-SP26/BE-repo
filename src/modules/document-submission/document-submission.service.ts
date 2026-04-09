@@ -10,6 +10,7 @@ import { DocumentSubmission } from '../../entities/document-submission.entity';
 import { GroupMembership } from '../../entities/group-membership.entity';
 import { CreateDocumentSubmissionDto } from './dto/create-submission.dto';
 import { GradeDocumentDto } from './dto/grade-submission.dto';
+import { UpdateDocumentSubmissionDto } from './dto/update-submission.dto';
 
 @Injectable()
 export class DocumentSubmissionService {
@@ -62,6 +63,57 @@ export class DocumentSubmissionService {
     }
 
     submission.status = DocumentStatus.PENDING;
+    return this.submissionRepo.save(submission);
+  }
+
+  async updateVersion(
+    submissionId: string,
+    userId: string,
+    dto: UpdateDocumentSubmissionDto,
+  ) {
+    const submission = await this.submissionRepo.findOne({
+      where: { id: submissionId },
+    });
+
+    if (!submission) {
+      throw new NotFoundException('Submission not found');
+    }
+
+    const membership = await this.membershipRepo.findOne({
+      where: {
+        group_id: submission.group_id,
+        user_id: userId,
+        left_at: IsNull(),
+      },
+    });
+
+    if (!membership) {
+      throw new ForbiddenException('You are not a member of this group');
+    }
+
+    if (submission.status !== DocumentStatus.DRAFT) {
+      throw new ForbiddenException('Only draft versions can be updated');
+    }
+
+    if (dto.title !== undefined) {
+      submission.title = dto.title;
+    }
+
+    if (dto.reference !== undefined || dto.document_url !== undefined) {
+      const nextReference = dto.reference ?? dto.document_url ?? null;
+      const nextDocumentUrl = dto.document_url ?? dto.reference ?? null;
+      submission.reference = nextReference;
+      submission.document_url = nextDocumentUrl;
+    }
+
+    if (dto.change_summary !== undefined) {
+      submission.change_summary = dto.change_summary;
+    }
+
+    if (dto.content_markdown !== undefined) {
+      submission.content_markdown = dto.content_markdown;
+    }
+
     return this.submissionRepo.save(submission);
   }
 
@@ -132,6 +184,7 @@ export class DocumentSubmissionService {
       document_url: dto.document_url ?? dto.reference ?? null,
       reference: dto.reference ?? dto.document_url ?? null,
       change_summary: dto.change_summary ?? null,
+      content_markdown: dto.content_markdown ?? null,
       base_submission_id: dto.base_submission_id ?? null,
       version_number: (latestVersion?.version_number ?? 0) + 1,
       status: options.status,
